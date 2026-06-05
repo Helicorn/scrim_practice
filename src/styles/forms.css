@@ -1,0 +1,42 @@
+/* 공통 폼·보조 텍스트 (여러 페이지에서 재사용) */
+
+.text-hint {
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.text-label {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+}
+
+.input-field {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  min-height: var(--input-min-height);
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-input-border);
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
+  -webkit-text-fill-color: var(--color-input-text);
+  font: inherit;
+}
+
+.input-field::placeholder {
+  color: var(--color-text-faint);
+  opacity: 0.6;
+}
+
+.input-field:-webkit-autofill,
+.input-field:-webkit-autofill:hover,
+.input-field:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-input-text);
+  transition: background-color 9999s ease-out;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}

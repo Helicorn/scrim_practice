@@ -1,0 +1,13 @@
+/*
+ * 배달의민족 주아체 (BM JUA)
+ * © WOOWA BROTHERS Corp. — https://www.woowahan.com/fonts
+ * 개인·상업 무료 사용 가능 (폰트 파일 유료 판매 금지)
+ */
+
+@font-face {
+  font-family: 'BM JUA';
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/BMJUA.woff2') format('woff2');
+}

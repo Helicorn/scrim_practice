@@ -1,0 +1,6 @@
+# 이 파일을 application-oracle-local.yml 로 복사한 뒤 비밀번호를 입력하세요.
+# application-oracle-local.yml 은 .gitignore 에 등록되어 있습니다.
+spring:
+  datasource:
+    username: "c##lol_scrim"
+    password: "your_oracle_password"

@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: civilwar-backend
+  profiles:
+    active: oracle,oracle-local
+
+civilwar:
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://localhost:5174
+  riot:
+    base-url: https://asia.api.riotgames.com
+    kr-base-url: https://kr.api.riotgames.com

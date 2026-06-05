@@ -1,0 +1,9 @@
+{
+  "name": "civilwar-backend",
+  "private": true,
+  "scripts": {
+    "dev": "gradlew.bat bootRun",
+    "build": "gradlew.bat build -x test",
+    "health": "curl.exe -s http://localhost:8080/api/health"
+  }
+}
