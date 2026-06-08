@@ -41,18 +41,21 @@ public class SummonerRankStatRefreshService {
 	private final SummonerRepository summonerRepository;
 	private final SummonerRankStatRepository rankStatRepository;
 	private final RiotKrClient riotKrClient;
+	private final SummonerDisplayStatsService displayStatsService;
 
 	public SummonerRankStatRefreshService(
 			CustomGameRepository customGameRepository,
 			CustomGamePlayerRepository customGamePlayerRepository,
 			SummonerRepository summonerRepository,
 			SummonerRankStatRepository rankStatRepository,
-			RiotKrClient riotKrClient) {
+			RiotKrClient riotKrClient,
+			SummonerDisplayStatsService displayStatsService) {
 		this.customGameRepository = customGameRepository;
 		this.customGamePlayerRepository = customGamePlayerRepository;
 		this.summonerRepository = summonerRepository;
 		this.rankStatRepository = rankStatRepository;
 		this.riotKrClient = riotKrClient;
+		this.displayStatsService = displayStatsService;
 	}
 
 	public RefreshSessionRankStatsResponse refreshSessionRankStats(
@@ -87,6 +90,12 @@ public class SummonerRankStatRefreshService {
 			}
 			SummonerEntity summoner = gamePlayers.get(i).getSummoner();
 			String label = summoner.getGameName() + "#" + summoner.getTagLine();
+
+			if (displayStatsService.resolveSource(summoner) == SummonerStatsSource.CUSTOM) {
+				skipped += 1;
+				skipReasons.add(label + ": 내전 전적 있음 — 랭크 조회 생략");
+				continue;
+			}
 
 			try {
 				Optional<RankStatDto> saved = refreshOneSummoner(summoner, apiKey);

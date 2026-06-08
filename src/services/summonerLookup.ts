@@ -1,6 +1,5 @@
 import {
   getAccountByRiotId,
-  getMatchIdsByPuuid,
   mapRiotApiErrorMessage,
   RiotApiError,
 } from '@/services/riotApi'
@@ -25,12 +24,9 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function validatePlayers(players: Player[], apiKey: string): string[] {
+/** Riot API Key 없이 검사: 빈칸·중복 등 */
+export function validatePlayerInputs(players: Player[]): string[] {
   const errors: string[] = []
-
-  if (!apiKey.trim()) {
-    errors.push('Riot API Key를 입력해 주세요.')
-  }
 
   const emptyNames = players
     .map((p, i) => ({ p, i }))
@@ -85,47 +81,45 @@ function validatePlayers(players: Player[], apiKey: string): string[] {
 }
 
 /**
- * 10인 소환사 전적 검색.
- * 1) Account-V1으로 PUUID 조회
- * 2) Match-V5로 최근 매치 ID 목록 조회 (전적 존재 확인)
+ * 지정 슬롯만 Account-V1으로 PUUID 조회 (신규·puuid 없음).
  */
-export async function lookupAllSummoners(
+export async function lookupSummonersAccount(
   players: Player[],
   apiKey: string,
+  slotIndices: number[],
 ): Promise<SummonerLookupResult> {
-  const validationErrors = validatePlayers(players, apiKey)
-  if (validationErrors.length > 0) {
-    return { notFound: [], validationErrors }
+  const trimmedKey = apiKey.trim()
+  if (!trimmedKey) {
+    return {
+      notFound: [],
+      validationErrors: ['Riot API Key를 입력해 주세요.'],
+    }
   }
 
-  const trimmedKey = apiKey.trim()
   const notFound: string[] = []
+  let delayPending = false
 
-  for (let i = 0; i < players.length; i += 1) {
-    const player = players[i]
+  for (const index of slotIndices) {
+    const player = players[index]
+    if (!player) continue
+
     const gameName = player.gameName.trim()
     const tagLine = player.tagLine.trim()
     const label = formatRiotId(player)
 
-    if (i > 0) {
+    if (delayPending) {
       await delay(LOOKUP_DELAY_MS)
     }
+    delayPending = true
 
     try {
       const account = await getAccountByRiotId(trimmedKey, gameName, tagLine)
       if (!account) {
         notFound.push(label)
         player.puuid = undefined
-        player.recentMatchCount = undefined
         continue
       }
-
       player.puuid = account.puuid
-
-      const matchIds = await getMatchIdsByPuuid(trimmedKey, account.puuid, 0, 20)
-      player.recentMatchCount = matchIds.length
-
-      await delay(LOOKUP_DELAY_MS)
     } catch (error) {
       if (error instanceof RiotApiError && error.status === 404) {
         notFound.push(label)
