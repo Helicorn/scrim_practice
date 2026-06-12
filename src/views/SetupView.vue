@@ -39,13 +39,16 @@ function confirmDismissSession() {
 }
 
 function onStart() {
-  session.startNewSession(selectedSeries.value, peerless.value)
+  if (session.hasActiveSession) {
+    session.clearActiveSession()
+  }
+  session.beginSetup(selectedSeries.value, peerless.value)
   router.push('/players')
 }
 
 function onContinue() {
   if (!session.hasActiveSession) return
-  router.push('/players')
+  router.push('/draft')
 }
 </script>
 
@@ -72,7 +75,7 @@ function onContinue() {
       :open="showDismissModal"
       title="진행 중인 내전 삭제"
       :messages="[
-        '저장된 진행 정보(소환사·팀·밴픽·현재 경기)가 모두 삭제됩니다.',
+        '저장된 진행 정보(소환사·팀·시리즈 점수)가 모두 삭제됩니다.',
         '이미 저장한 경기 결과 기록은 유지됩니다.',
         '삭제 후에는 새 내전을 시작하거나 다시 설정할 수 있습니다.',
       ]"
@@ -118,7 +121,7 @@ function onContinue() {
     </div>
 
     <p v-if="hasActiveSession" class="restart-note text-label">
-      「새 내전 시작」을 누르면 입력 중이던 소환사·팀·밴픽 정보가 초기화됩니다.
+      「새 내전 시작」을 누르면 진행 중이던 내전 정보가 초기화됩니다.
     </p>
   </section>
 </template>

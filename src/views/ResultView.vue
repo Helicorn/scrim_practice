@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
+const router = useRouter()
 const saveMessage = ref('')
 const saveError = ref('')
 const TEAM_SIZE = 5
@@ -38,6 +39,11 @@ function onSaveMatch() {
 
   const result = session.saveMatchToHistory()
   if (result.ok) {
+    if (result.shouldGoToDraft) {
+      saveMessage.value = `경기 결과를 저장했습니다. 다음 경기 밴픽으로 이동합니다. (${session.formatSessionSummary()})`
+      void router.push('/draft')
+      return
+    }
     saveMessage.value = `경기 결과를 저장했습니다. (총 ${session.matchHistory.length}경기)`
     return
   }

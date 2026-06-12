@@ -38,6 +38,12 @@ router.beforeEach((to) => {
   if (to.name === 'setup') return true
 
   const session = useSessionStore()
+
+  if (to.name === 'players' || to.name === 'teams' || to.name === 'draft') {
+    if (session.hasActiveSession || session.hasSetupInProgress) return true
+    return { name: 'setup' }
+  }
+
   if (!session.hasActiveSession) {
     return { name: 'setup' }
   }

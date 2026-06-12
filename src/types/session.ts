@@ -21,9 +21,11 @@ export interface Player {
   recentMatchCount?: number
 }
 
-/** 밴픽 결과 (추후 phase·챔피언 ID 등 확장) */
+/** 밴픽 결과 */
 export interface DraftState {
   completed: boolean
+  /** 이번 경기 픽 챔피언 ID (피어리스 집계용, 밴 제외) */
+  usedChampionIds?: string[]
 }
 
 /** 플레이어 KDA (수동 입력) */
@@ -55,7 +57,7 @@ export interface SavedMatchRecord {
   blueKda: PlayerKda[]
 }
 
-/** 진행 중 내전 메타 (localStorage) */
+/** 진행 중 내전 메타 (localStorage, 밴픽 화면 진입 후에만 저장) */
 export interface CivilWarMeta {
   sessionId: string
   seriesType: SeriesType
@@ -63,4 +65,8 @@ export interface CivilWarMeta {
   currentGame: number
   redSeriesWins: number
   blueSeriesWins: number
+  committed: boolean
+  players?: Player[]
+  redTeam?: Player[]
+  blueTeam?: Player[]
 }

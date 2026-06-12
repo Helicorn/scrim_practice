@@ -19,6 +19,20 @@ const unassignedPlayers = computed(() =>
   ),
 )
 
+function isTeamSlotFilled(team: 'red' | 'blue', slotIndex: number): boolean {
+  return session.isFilledPlayer(getSlot(team, slotIndex))
+}
+
+const isTeamsComplete = computed(() => {
+  if (unassignedPlayers.value.length > 0) return false
+  for (let i = 0; i < TEAM_SIZE; i += 1) {
+    if (!isTeamSlotFilled('red', i) || !isTeamSlotFilled('blue', i)) {
+      return false
+    }
+  }
+  return true
+})
+
 function isSelected(player: Player): boolean {
   if (!selectedPlayer.value) return false
   return session.playerKey(selectedPlayer.value) === session.playerKey(player)
@@ -121,10 +135,16 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
       </div>
     </div>
 
-    <nav class="teams-nav">
-      <RouterLink to="/players">← 소환사 입력</RouterLink>
-      <RouterLink to="/draft">밴픽으로 →</RouterLink>
-    </nav>
+    <div class="teams-actions">
+      <RouterLink to="/players" class="teams-back">← 소환사 입력</RouterLink>
+      <RouterLink
+        v-if="isTeamsComplete"
+        to="/draft"
+        class="btn-next"
+      >
+        다음 →
+      </RouterLink>
+    </div>
   </section>
 </template>
 
@@ -281,8 +301,39 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
   background: rgba(66, 184, 131, 0.12);
 }
 
-.teams-nav {
+.teams-actions {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 1rem;
+}
+
+.teams-back {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.teams-back:hover {
+  text-decoration: underline;
+}
+
+.btn-next {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.55rem 1.35rem;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter 0.2s;
+}
+
+.btn-next:hover {
+  filter: brightness(1.08);
 }
 </style>

@@ -16,9 +16,15 @@ const TEAM_SIZE = 5
 const RIOT_API_KEY_STORAGE = 'civilwar_riot_api_key'
 const MATCH_HISTORY_STORAGE = 'civilwar_match_history'
 const SESSION_META_STORAGE = 'civilwar_session_meta'
+const PEERLESS_CHAMPIONS_STORAGE = 'civilwar_peerless_champions'
+
+interface PeerlessChampionStore {
+  sessionId: string
+  championIds: string[]
+}
 
 export type SaveMatchResult =
-  | { ok: true }
+  | { ok: true; shouldGoToDraft?: boolean }
   | { ok: false; message: string }
 
 function loadStoredRiotApiKey(): string {
@@ -43,7 +49,13 @@ function isFilledPlayer(player: Player | undefined): boolean {
 }
 
 function clonePlayers(list: Player[]): Player[] {
-  return list.map((p) => ({ gameName: p.gameName, tagLine: p.tagLine }))
+  return list.map((p) => ({
+    gameName: p.gameName,
+    tagLine: p.tagLine,
+    puuid: p.puuid,
+    summonerId: p.summonerId,
+    recentMatchCount: p.recentMatchCount,
+  }))
 }
 
 function cloneKdaList(list: PlayerKda[]): PlayerKda[] {
@@ -65,9 +77,31 @@ function loadSessionMeta(): CivilWarMeta | null {
   try {
     const raw = localStorage.getItem(SESSION_META_STORAGE)
     if (!raw) return null
-    return JSON.parse(raw) as CivilWarMeta
+    const meta = JSON.parse(raw) as CivilWarMeta
+    if (meta.committed !== true) {
+      try {
+        localStorage.removeItem(SESSION_META_STORAGE)
+      } catch {
+        /* ignore */
+      }
+      return null
+    }
+    return meta
   } catch {
     return null
+  }
+}
+
+function loadPeerlessChampions(sessionId: string | null): string[] {
+  if (!sessionId) return []
+  try {
+    const raw = localStorage.getItem(PEERLESS_CHAMPIONS_STORAGE)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as PeerlessChampionStore
+    if (parsed.sessionId !== sessionId) return []
+    return Array.isArray(parsed.championIds) ? parsed.championIds : []
+  } catch {
+    return []
   }
 }
 
@@ -88,28 +122,42 @@ export const useSessionStore = defineStore('session', () => {
   const currentGame = ref(storedMeta?.currentGame ?? 1)
   const redSeriesWins = ref(storedMeta?.redSeriesWins ?? 0)
   const blueSeriesWins = ref(storedMeta?.blueSeriesWins ?? 0)
+  const committed = ref(storedMeta?.committed ?? false)
 
-  const players = ref<Player[]>([])
-  const redTeam = ref<Player[]>([])
-  const blueTeam = ref<Player[]>([])
+  const players = ref<Player[]>(
+    storedMeta?.players ? clonePlayers(storedMeta.players) : [],
+  )
+  const redTeam = ref<Player[]>(
+    storedMeta?.redTeam ? clonePlayers(storedMeta.redTeam) : [],
+  )
+  const blueTeam = ref<Player[]>(
+    storedMeta?.blueTeam ? clonePlayers(storedMeta.blueTeam) : [],
+  )
   const draft = ref<DraftState | null>(null)
   const matchResult = ref<MatchResult | null>(null)
   const riotApiKey = ref(loadStoredRiotApiKey())
   const matchHistory = ref<SavedMatchRecord[]>(loadMatchHistory())
+  const peerlessUsedChampionIds = ref<string[]>(
+    loadPeerlessChampions(storedMeta?.sessionId ?? null),
+  )
 
   const hasActiveSession = computed(
-    () => sessionId.value !== null && seriesType.value !== null,
+    () =>
+      committed.value &&
+      sessionId.value !== null &&
+      seriesType.value !== null,
+  )
+
+  const hasSetupInProgress = computed(
+    () => !committed.value && seriesType.value !== null,
   )
 
   function persistSessionMeta() {
-    if (!sessionId.value || !seriesType.value) {
-      try {
-        localStorage.removeItem(SESSION_META_STORAGE)
-      } catch {
-        /* ignore */
-      }
+    if (!sessionId.value || !seriesType.value || !committed.value) {
       return
     }
+    ensurePlayers()
+    ensureTeams()
     const meta: CivilWarMeta = {
       sessionId: sessionId.value,
       seriesType: seriesType.value,
@@ -117,6 +165,10 @@ export const useSessionStore = defineStore('session', () => {
       currentGame: currentGame.value,
       redSeriesWins: redSeriesWins.value,
       blueSeriesWins: blueSeriesWins.value,
+      committed: true,
+      players: clonePlayers(players.value),
+      redTeam: clonePlayers(redTeam.value),
+      blueTeam: clonePlayers(blueTeam.value),
     }
     try {
       localStorage.setItem(SESSION_META_STORAGE, JSON.stringify(meta))
@@ -126,8 +178,24 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   watch(
-    [sessionId, seriesType, peerless, currentGame, redSeriesWins, blueSeriesWins],
+    [
+      sessionId,
+      seriesType,
+      peerless,
+      currentGame,
+      redSeriesWins,
+      blueSeriesWins,
+      committed,
+    ],
     () => persistSessionMeta(),
+    { deep: true },
+  )
+
+  watch(
+    [players, redTeam, blueTeam],
+    () => {
+      if (committed.value) persistSessionMeta()
+    },
     { deep: true },
   )
 
@@ -188,6 +256,9 @@ export const useSessionStore = defineStore('session', () => {
     target.value[slotIndex] = {
       gameName: player.gameName,
       tagLine: player.tagLine,
+      puuid: player.puuid,
+      summonerId: player.summonerId,
+      recentMatchCount: player.recentMatchCount,
     }
   }
 
@@ -233,23 +304,89 @@ export const useSessionStore = defineStore('session', () => {
     matchResult.value!.winner = team
   }
 
-  function resetMatchFlowState() {
-    players.value = []
-    redTeam.value = []
-    blueTeam.value = []
+  function persistPeerlessChampions() {
+    if (!sessionId.value) return
+    try {
+      const payload: PeerlessChampionStore = {
+        sessionId: sessionId.value,
+        championIds: peerlessUsedChampionIds.value,
+      }
+      localStorage.setItem(PEERLESS_CHAMPIONS_STORAGE, JSON.stringify(payload))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function clearPeerlessChampions() {
+    peerlessUsedChampionIds.value = []
+    try {
+      localStorage.removeItem(PEERLESS_CHAMPIONS_STORAGE)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function recordPeerlessChampions(ids: string[]) {
+    if (!peerless.value || ids.length === 0) return
+    peerlessUsedChampionIds.value = [
+      ...new Set([...peerlessUsedChampionIds.value, ...ids]),
+    ]
+    persistPeerlessChampions()
+  }
+
+  function getPeerlessBlockedChampionIds(): readonly string[] {
+    if (!peerless.value) return []
+    return peerlessUsedChampionIds.value
+  }
+
+  function resetDraftAndResultState() {
     draft.value = null
     matchResult.value = null
   }
 
-  function startNewSession(type: SeriesType, isPeerless: boolean) {
+  function resetMatchFlowState() {
+    players.value = []
+    redTeam.value = []
+    blueTeam.value = []
+    resetDraftAndResultState()
+  }
+
+  function areTeamsComplete(): boolean {
+    ensurePlayers()
+    ensureTeams()
+    const unassigned = players.value.filter(
+      (player) => isFilledPlayer(player) && !isOnTeam(player),
+    )
+    if (unassigned.length > 0) return false
+    for (let i = 0; i < TEAM_SIZE; i += 1) {
+      if (
+        !isFilledPlayer(redTeam.value[i]) ||
+        !isFilledPlayer(blueTeam.value[i])
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+
+  function beginSetup(type: SeriesType, isPeerless: boolean) {
+    committed.value = false
     sessionId.value = crypto.randomUUID()
     seriesType.value = type
     peerless.value = isPeerless
     currentGame.value = 1
     redSeriesWins.value = 0
     blueSeriesWins.value = 0
+    clearPeerlessChampions()
     resetMatchFlowState()
+  }
+
+  function commitActiveSession(): boolean {
+    if (!sessionId.value || !seriesType.value) return false
+    if (!areTeamsComplete()) return false
+    committed.value = true
     persistSessionMeta()
+    return true
   }
 
   /** 진행 중 내전 세션·입력 중 데이터 삭제 (저장된 경기 히스토리·API Key는 유지) */
@@ -260,14 +397,23 @@ export const useSessionStore = defineStore('session', () => {
     currentGame.value = 1
     redSeriesWins.value = 0
     blueSeriesWins.value = 0
+    committed.value = false
+    clearPeerlessChampions()
     resetMatchFlowState()
-    persistSessionMeta()
+    try {
+      localStorage.removeItem(SESSION_META_STORAGE)
+    } catch {
+      /* ignore */
+    }
   }
 
   function formatSessionSummary(): string {
     if (!seriesType.value) return ''
     const cfg = SERIES_CONFIG[seriesType.value]
     const peerlessLabel = peerless.value ? ' · 피어리스' : ''
+    if (!committed.value) {
+      return `${cfg.label}${peerlessLabel} · 설정 중`
+    }
     const score = `RED ${redSeriesWins.value} - ${blueSeriesWins.value} BLUE`
     return `${cfg.label}${peerlessLabel} · ${currentGame.value}/${cfg.maxGames}판 · ${score}`
   }
@@ -291,8 +437,11 @@ export const useSessionStore = defineStore('session', () => {
     if (!winner) {
       return { ok: false, message: '승리 팀을 선택해 주세요.' }
     }
-    if (!sessionId.value || !seriesType.value) {
-      return { ok: false, message: '진입 페이지에서 내전을 먼저 시작해 주세요.' }
+    if (!sessionId.value || !seriesType.value || !committed.value) {
+      return {
+        ok: false,
+        message: '밴픽 화면까지 진행한 뒤 경기 결과를 저장할 수 있습니다.',
+      }
     }
 
     const record: SavedMatchRecord = {
@@ -321,13 +470,26 @@ export const useSessionStore = defineStore('session', () => {
       redSeriesWins.value >= cfg.winsRequired ||
       blueSeriesWins.value >= cfg.winsRequired
 
+    let shouldGoToDraft = false
+
     if (!seriesDone && currentGame.value < cfg.maxGames) {
+      if (peerless.value && draft.value?.usedChampionIds?.length) {
+        recordPeerlessChampions(draft.value.usedChampionIds)
+      }
+
       currentGame.value += 1
-      resetMatchFlowState()
+
+      if (peerless.value) {
+        resetDraftAndResultState()
+        shouldGoToDraft = true
+      } else {
+        resetMatchFlowState()
+      }
+
       persistSessionMeta()
     }
 
-    return { ok: true }
+    return { ok: true, shouldGoToDraft }
   }
 
   return {
@@ -338,6 +500,8 @@ export const useSessionStore = defineStore('session', () => {
     redSeriesWins,
     blueSeriesWins,
     hasActiveSession,
+    hasSetupInProgress,
+    committed,
     players,
     redTeam,
     blueTeam,
@@ -345,7 +509,10 @@ export const useSessionStore = defineStore('session', () => {
     matchResult,
     riotApiKey,
     matchHistory,
-    startNewSession,
+    peerlessUsedChampionIds,
+    beginSetup,
+    commitActiveSession,
+    areTeamsComplete,
     clearActiveSession,
     formatSessionSummary,
     ensurePlayers,
@@ -359,6 +526,7 @@ export const useSessionStore = defineStore('session', () => {
     ensureMatchResult,
     setWinner,
     getKda,
+    getPeerlessBlockedChampionIds,
     saveMatchToHistory,
   }
 })

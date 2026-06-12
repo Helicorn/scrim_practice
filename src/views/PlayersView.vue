@@ -272,7 +272,7 @@ async function onNext() {
 <template>
   <section class="players">
     <h1>소환사 입력</h1>
-    <p v-if="session.hasActiveSession" class="session-chip text-label">
+    <p v-if="session.seriesType" class="session-chip text-label">
       {{ session.formatSessionSummary() }}
     </p>
     <p class="text-hint">

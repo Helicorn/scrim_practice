@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
+const router = useRouter()
 const TEAM_SIZE = 5
 const BAN_COUNT = 5
 const CHAMPION_COLUMNS = 10
 const DRAFT_TIMER_SECONDS = 30
+const SWAP_TIMER_SECONDS = 60
+const POSITION_LABELS = ['탑', '정글', '미드', '원딜', '서포터'] as const
 const ddragonDataVersionUrl = 'https://ddragon.leagueoflegends.com/api/versions.json'
 const pickBanOrder = [
   { team: 'RED', type: 'BAN' },
@@ -53,6 +56,9 @@ interface ChampionPortrait {
   imageUrl: string
 }
 
+/** 시간 초과로 밴하지 않음 (밴 칸에 X 표시) */
+type BanSlot = ChampionPortrait | 'skipped' | null
+
 session.ensurePlayers()
 session.ensureTeams()
 
@@ -65,12 +71,8 @@ const remainingSeconds = ref(DRAFT_TIMER_SECONDS)
 const currentPhaseIndex = ref(0)
 const confirmNotice = ref('')
 const selectedChampionId = ref<string | null>(null)
-const redBans = ref<Array<ChampionPortrait | null>>(
-  Array(BAN_COUNT).fill(null),
-)
-const blueBans = ref<Array<ChampionPortrait | null>>(
-  Array(BAN_COUNT).fill(null),
-)
+const redBans = ref<BanSlot[]>(Array(BAN_COUNT).fill(null))
+const blueBans = ref<BanSlot[]>(Array(BAN_COUNT).fill(null))
 const redPicks = ref<Array<ChampionPortrait | null>>(
   Array(TEAM_SIZE).fill(null),
 )
@@ -81,7 +83,14 @@ const redBanCount = ref(0)
 const blueBanCount = ref(0)
 const redPickCount = ref(0)
 const bluePickCount = ref(0)
+const isSwapPhaseActive = ref(false)
+const isSwapPhaseComplete = ref(false)
+const swapRemainingSeconds = ref(0)
+const selectedSwapSlot = ref<{ team: 'red' | 'blue'; index: number } | null>(
+  null,
+)
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let swapCountdownTimer: ReturnType<typeof setInterval> | null = null
 
 const filteredChampionPortraits = computed(() => {
   const query = championSearchQuery.value.trim().toLowerCase()
@@ -96,7 +105,10 @@ const filteredChampionPortraits = computed(() => {
 })
 
 const phaseTimerText = computed(() => {
-  return `:${String(remainingSeconds.value).padStart(2, '0')}`
+  const seconds = isSwapPhaseActive.value
+    ? swapRemainingSeconds.value
+    : remainingSeconds.value
+  return `:${String(seconds).padStart(2, '0')}`
 })
 
 const currentOrder = computed(() => pickBanOrder[currentPhaseIndex.value])
@@ -109,27 +121,74 @@ const currentPhaseLabelText = computed(() => {
   return `${teamLabel} ${typeLabel} PHASE`
 })
 
+const isDraftComplete = computed(() => {
+  return (
+    isDraftStarted.value &&
+    currentPhaseIndex.value >= pickBanOrder.length - 1 &&
+    remainingSeconds.value === 0
+  )
+})
+
+const canProceedToResult = computed(
+  () => isDraftComplete.value && isSwapPhaseComplete.value,
+)
+
 const currentPhaseLabel = computed(() => {
   if (!isDraftStarted.value) return 'BAN / PICK'
+  if (isSwapPhaseActive.value) return '챔피언 스왑 PHASE'
+  if (isDraftComplete.value) return '밴픽 종료'
   return currentPhaseLabelText.value
 })
 
 const phaseHeaderLabel = computed(() => {
   if (!isDraftStarted.value) return 'PICK PHASE'
+  if (isSwapPhaseActive.value) return '챔피언 스왑'
+  if (isDraftComplete.value) return '밴픽 종료'
   return currentPhaseLabelText.value
 })
 
 const displayedRedBans = computed(() => [...redBans.value].reverse())
 const displayedBlueBans = computed(() => blueBans.value)
+function isBanChampion(ban: BanSlot): ban is ChampionPortrait {
+  return ban !== null && ban !== 'skipped'
+}
+
 const unavailableChampionIds = computed(() => {
   const bannedIds = [...redBans.value, ...blueBans.value]
-    .filter((champion): champion is ChampionPortrait => champion !== null)
+    .filter(isBanChampion)
     .map((champion) => champion.id)
   const pickedIds = [...redPicks.value, ...bluePicks.value]
     .filter((champion): champion is ChampionPortrait => champion !== null)
     .map((champion) => champion.id)
-  return new Set([...bannedIds, ...pickedIds])
+  const peerlessBlocked = session.getPeerlessBlockedChampionIds()
+  return new Set([...bannedIds, ...pickedIds, ...peerlessBlocked])
 })
+
+const peerlessBlockedCount = computed(
+  () => session.getPeerlessBlockedChampionIds().length,
+)
+
+function isPeerlessBlockedChampion(championId: string): boolean {
+  return session.getPeerlessBlockedChampionIds().includes(championId)
+}
+
+function collectUsedChampionIds(): string[] {
+  return [
+    ...redPicks.value
+      .filter((champion): champion is ChampionPortrait => champion !== null)
+      .map((champion) => champion.id),
+    ...bluePicks.value
+      .filter((champion): champion is ChampionPortrait => champion !== null)
+      .map((champion) => champion.id),
+  ]
+}
+
+function syncDraftToSession() {
+  session.draft = {
+    completed: true,
+    usedChampionIds: collectUsedChampionIds(),
+  }
+}
 
 async function loadChampionPortraits() {
   isLoadingChampions.value = true
@@ -175,6 +234,15 @@ async function loadChampionPortraits() {
 }
 
 onMounted(() => {
+  if (!session.seriesType) {
+    void router.replace('/setup')
+    return
+  }
+  if (!session.areTeamsComplete()) {
+    void router.replace('/teams')
+    return
+  }
+  session.commitActiveSession()
   void loadChampionPortraits()
 })
 
@@ -209,6 +277,36 @@ function applyBan(team: 'RED' | 'BLUE', championId: string): boolean {
   return true
 }
 
+/** 밴 페이즈 시간 초과 — 챔피언 없이 X 표시 */
+function applyBanSkip(team: 'RED' | 'BLUE'): boolean {
+  if (team === 'RED') {
+    if (redBanCount.value >= BAN_COUNT) return false
+    const slotIndex = redBanCount.value
+    const next = [...redBans.value]
+    next[slotIndex] = 'skipped'
+    redBans.value = next
+    redBanCount.value += 1
+    return true
+  }
+
+  if (blueBanCount.value >= BAN_COUNT) return false
+  const slotIndex = blueBanCount.value
+  const next = [...blueBans.value]
+  next[slotIndex] = 'skipped'
+  blueBans.value = next
+  blueBanCount.value += 1
+  return true
+}
+
+function pickRandomAvailableChampion(): ChampionPortrait | null {
+  const available = championPortraits.value.filter(
+    (champion) => !unavailableChampionIds.value.has(champion.id),
+  )
+  if (available.length === 0) return null
+  const index = Math.floor(Math.random() * available.length)
+  return available[index] ?? null
+}
+
 function applyPick(team: 'RED' | 'BLUE', championId: string): boolean {
   const champion = getChampionById(championId)
   if (!champion) return false
@@ -232,25 +330,174 @@ function stopCountdown() {
   countdownTimer = null
 }
 
+function markDraftComplete() {
+  syncDraftToSession()
+}
+
+function stopSwapCountdown() {
+  if (!swapCountdownTimer) return
+  clearInterval(swapCountdownTimer)
+  swapCountdownTimer = null
+}
+
+function tickSwapCountdown() {
+  if (!isSwapPhaseActive.value) return
+  if (swapRemainingSeconds.value <= 0) return
+
+  swapRemainingSeconds.value -= 1
+  if (swapRemainingSeconds.value <= 0) {
+    onSwapPhaseExpired()
+  }
+}
+
+function startSwapCountdown() {
+  stopSwapCountdown()
+  swapCountdownTimer = setInterval(tickSwapCountdown, 1000)
+}
+
+function onSwapPhaseExpired() {
+  stopSwapCountdown()
+  isSwapPhaseActive.value = false
+  isSwapPhaseComplete.value = true
+  selectedSwapSlot.value = null
+  syncDraftToSession()
+  confirmNotice.value = '스왑 시간이 종료되었습니다.'
+}
+
+function onProceedToResult() {
+  syncDraftToSession()
+}
+
+function startSwapPhase() {
+  isSwapPhaseActive.value = true
+  isSwapPhaseComplete.value = false
+  swapRemainingSeconds.value = SWAP_TIMER_SECONDS
+  selectedSwapSlot.value = null
+  confirmNotice.value =
+    '같은 팀 슬롯 두 개를 클릭해 챔피언 위치를 스왑하세요.'
+  startSwapCountdown()
+}
+
+function finishDraft() {
+  markDraftComplete()
+  startSwapPhase()
+}
+
+function isSwapSlotSelected(team: 'red' | 'blue', index: number) {
+  const selected = selectedSwapSlot.value
+  return selected?.team === team && selected.index === index
+}
+
+function swapPicks(team: 'red' | 'blue', indexA: number, indexB: number) {
+  const picks = team === 'red' ? redPicks : bluePicks
+  const next = [...picks.value]
+  const temp = next[indexA] ?? null
+  next[indexA] = next[indexB] ?? null
+  next[indexB] = temp
+  picks.value = next
+}
+
+function onPickSlotClick(team: 'red' | 'blue', index: number) {
+  if (!isSwapPhaseActive.value) return
+
+  const pick = getPickedChampion(team, index)
+  if (!pick) {
+    confirmNotice.value = '픽된 챔피언이 있는 슬롯만 선택할 수 있습니다.'
+    return
+  }
+
+  const current = selectedSwapSlot.value
+  if (!current) {
+    selectedSwapSlot.value = { team, index }
+    confirmNotice.value = `${POSITION_LABELS[index]} 슬롯 선택 · 스왑할 슬롯을 선택하세요.`
+    return
+  }
+
+  if (current.team === team && current.index === index) {
+    selectedSwapSlot.value = null
+    confirmNotice.value = '선택을 취소했습니다.'
+    return
+  }
+
+  if (current.team !== team) {
+    selectedSwapSlot.value = { team, index }
+    confirmNotice.value = `${POSITION_LABELS[index]} 슬롯 선택 · 같은 팀 슬롯끼리만 스왑할 수 있습니다.`
+    return
+  }
+
+  swapPicks(team, current.index, index)
+  selectedSwapSlot.value = null
+  syncDraftToSession()
+  const labelA = POSITION_LABELS[current.index]
+  const labelB = POSITION_LABELS[index]
+  confirmNotice.value = `${labelA} ↔ ${labelB} 챔피언 위치를 스왑했습니다.`
+}
+
 function moveToNextPhase(): boolean {
   const isLastPhase = currentPhaseIndex.value >= pickBanOrder.length - 1
   if (isLastPhase) {
     remainingSeconds.value = 0
     stopCountdown()
+    finishDraft()
     return false
   }
 
   currentPhaseIndex.value += 1
   remainingSeconds.value = DRAFT_TIMER_SECONDS
   selectedChampionId.value = null
-  confirmNotice.value = ''
   return true
+}
+
+function tickCountdown() {
+  if (!isDraftStarted.value || !currentOrder.value) return
+  if (remainingSeconds.value <= 0) return
+
+  remainingSeconds.value -= 1
+  if (remainingSeconds.value <= 0) {
+    onPhaseTimerExpired()
+  }
+}
+
+function startCountdown() {
+  stopCountdown()
+  countdownTimer = setInterval(tickCountdown, 1000)
+}
+
+function onPhaseTimerExpired() {
+  const order = currentOrder.value
+  if (!order || !isDraftStarted.value) return
+
+  stopCountdown()
+  remainingSeconds.value = 0
+  const phaseLabel = currentPhaseLabel.value
+
+  if (order.type === 'BAN') {
+    const skipped = applyBanSkip(order.team)
+    confirmNotice.value = skipped
+      ? `${phaseLabel} 시간 초과 · 밴 스킵 (×)`
+      : `${phaseLabel} 시간 초과 · 밴 슬롯 저장 실패`
+  } else {
+    const random = pickRandomAvailableChampion()
+    if (random) {
+      applyPick(order.team, random.id)
+      confirmNotice.value = `${phaseLabel} 시간 초과 · ${random.name} 자동 픽`
+    } else {
+      confirmNotice.value = `${phaseLabel} 시간 초과 · 픽 가능한 챔피언 없음`
+    }
+  }
+
+  if (moveToNextPhase()) {
+    startCountdown()
+  } else {
+    confirmNotice.value += ' · 밴픽 종료'
+  }
 }
 
 function startDraft() {
   if (isDraftStarted.value) return
 
   isDraftStarted.value = true
+  session.draft = null
   currentPhaseIndex.value = 0
   remainingSeconds.value = DRAFT_TIMER_SECONDS
   confirmNotice.value = ''
@@ -263,15 +510,13 @@ function startDraft() {
   blueBanCount.value = 0
   redPickCount.value = 0
   bluePickCount.value = 0
+  isSwapPhaseActive.value = false
+  isSwapPhaseComplete.value = false
+  swapRemainingSeconds.value = 0
+  selectedSwapSlot.value = null
+  stopSwapCountdown()
 
-  stopCountdown()
-  countdownTimer = setInterval(() => {
-    if (remainingSeconds.value <= 1) {
-      moveToNextPhase()
-      return
-    }
-    remainingSeconds.value -= 1
-  }, 1000)
+  startCountdown()
 }
 
 function confirmBanPick() {
@@ -318,6 +563,10 @@ function onChampionClick(championId: string) {
 
 onUnmounted(() => {
   stopCountdown()
+  stopSwapCountdown()
+  if (isDraftComplete.value) {
+    syncDraftToSession()
+  }
 })
 </script>
 
@@ -325,6 +574,9 @@ onUnmounted(() => {
   <section class="draft">
     <header class="draft-header">
       <p class="draft-match text-label">내전 · 밴픽</p>
+      <p v-if="session.peerless && peerlessBlockedCount > 0" class="peerless-notice">
+        피어리스 · 이전 경기 픽 챔피언 {{ peerlessBlockedCount }}명 선택 불가
+      </p>
       <div class="draft-phase">
         <span class="phase-label">{{ phaseHeaderLabel }}</span>
         <span class="phase-timer" aria-label="타이머">{{ phaseTimerText }}</span>
@@ -335,7 +587,15 @@ onUnmounted(() => {
         :disabled="isDraftStarted"
         @click="startDraft"
       >
-        {{ isDraftStarted ? '밴픽 진행 중' : '밴픽 시작' }}
+        {{
+          isSwapPhaseActive
+            ? '스왑 진행 중'
+            : isDraftComplete
+              ? '밴픽 완료'
+              : isDraftStarted
+                ? '밴픽 진행 중'
+                : '밴픽 시작'
+        }}
       </button>
     </header>
 
@@ -351,8 +611,18 @@ onUnmounted(() => {
               filled:
                 session.isFilledPlayer(getSlot('red', i - 1)) ||
                 !!getPickedChampion('red', i - 1),
+              'has-champion': !!getPickedChampion('red', i - 1),
+              'swap-selectable':
+                isSwapPhaseActive && !!getPickedChampion('red', i - 1),
+              'swap-selected': isSwapSlotSelected('red', i - 1),
             }"
+            :role="isSwapPhaseActive ? 'button' : undefined"
+            :tabindex="isSwapPhaseActive && getPickedChampion('red', i - 1) ? 0 : undefined"
+            @click="onPickSlotClick('red', i - 1)"
+            @keydown.enter.prevent="onPickSlotClick('red', i - 1)"
+            @keydown.space.prevent="onPickSlotClick('red', i - 1)"
           >
+            <span class="pick-position">{{ POSITION_LABELS[i - 1] }}</span>
             <div
               v-if="getPickedChampion('red', i - 1)"
               class="pick-champion-art-wrap"
@@ -364,7 +634,7 @@ onUnmounted(() => {
                 class="pick-champion-art"
               />
             </div>
-            <span v-else class="pick-name">
+            <span class="pick-name">
               {{
                 session.isFilledPlayer(getSlot('red', i - 1))
                   ? session.formatPlayerLabel(getSlot('red', i - 1))
@@ -377,7 +647,7 @@ onUnmounted(() => {
 
       <div class="draft-center">
         <div class="champion-portrait" aria-label="챔피언 초상화 영역">
-          <div class="champion-search-wrap">
+          <div v-if="!isSwapPhaseActive" class="champion-search-wrap">
             <div class="champion-search-row">
               <input
                 v-model.trim="championSearchQuery"
@@ -389,14 +659,33 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="btn-confirm-pick"
-                :disabled="!isDraftStarted"
+                :disabled="!isDraftStarted || isDraftComplete"
                 @click="confirmBanPick"
               >
                 확인
               </button>
             </div>
           </div>
-          <p v-if="isLoadingChampions" class="portrait-state text-label">
+          <!-- <p v-if="confirmNotice" class="confirm-notice" role="status">
+            {{ confirmNotice }}
+          </p> -->
+          <div
+            v-if="isSwapPhaseActive"
+            class="swap-panel"
+            role="status"
+          >
+            <p class="swap-panel-title">챔피언 위치 스왑</p>
+            <p class="swap-panel-timer">
+              남은 시간 {{ swapRemainingSeconds }}초
+            </p>
+            <!-- <p v-if="confirmNotice" class="swap-panel-notice">
+              {{ confirmNotice }}
+            </p>
+            <p v-else class="swap-panel-hint">
+              같은 팀 슬롯 두 개를 클릭해 챔피언을 맞바꿀 수 있습니다.
+            </p> -->
+          </div>
+          <p v-else-if="isLoadingChampions" class="portrait-state text-label">
             챔피언 정보를 불러오는 중...
           </p>
           <p v-else-if="championLoadError" class="portrait-state portrait-error">
@@ -420,10 +709,18 @@ onUnmounted(() => {
                 :alt="`${champion.name} 초상화`"
                 class="champion-image"
                 :class="{
-                  selectable: isDraftStarted,
+                  selectable: isDraftStarted && !isDraftComplete,
                   selected: selectedChampionId === champion.id,
                   unavailable: unavailableChampionIds.has(champion.id),
+                  'peerless-blocked': isPeerlessBlockedChampion(champion.id),
                 }"
+                :title="
+                  isPeerlessBlockedChampion(champion.id)
+                    ? `${champion.name} · 피어리스 (이전 경기 픽)`
+                    : unavailableChampionIds.has(champion.id)
+                      ? `${champion.name} · 선택 불가`
+                      : champion.name
+                "
                 loading="lazy"
                 @click="onChampionClick(champion.id)"
               />
@@ -443,8 +740,18 @@ onUnmounted(() => {
               filled:
                 session.isFilledPlayer(getSlot('blue', i - 1)) ||
                 !!getPickedChampion('blue', i - 1),
+              'has-champion': !!getPickedChampion('blue', i - 1),
+              'swap-selectable':
+                isSwapPhaseActive && !!getPickedChampion('blue', i - 1),
+              'swap-selected': isSwapSlotSelected('blue', i - 1),
             }"
+            :role="isSwapPhaseActive ? 'button' : undefined"
+            :tabindex="isSwapPhaseActive && getPickedChampion('blue', i - 1) ? 0 : undefined"
+            @click="onPickSlotClick('blue', i - 1)"
+            @keydown.enter.prevent="onPickSlotClick('blue', i - 1)"
+            @keydown.space.prevent="onPickSlotClick('blue', i - 1)"
           >
+            <span class="pick-position">{{ POSITION_LABELS[i - 1] }}</span>
             <div
               v-if="getPickedChampion('blue', i - 1)"
               class="pick-champion-art-wrap"
@@ -456,7 +763,7 @@ onUnmounted(() => {
                 class="pick-champion-art"
               />
             </div>
-            <span v-else class="pick-name">
+            <span class="pick-name">
               {{
                 session.isFilledPlayer(getSlot('blue', i - 1))
                   ? session.formatPlayerLabel(getSlot('blue', i - 1))
@@ -474,9 +781,25 @@ onUnmounted(() => {
           v-for="(ban, index) in displayedRedBans"
           :key="`red-ban-${index}`"
           class="ban-slot"
+          :class="{
+            'ban-slot--skipped': ban === 'skipped',
+            'ban-slot--filled': isBanChampion(ban),
+          }"
+          :title="
+            ban === 'skipped'
+              ? '밴 없음 (시간 초과)'
+              : isBanChampion(ban)
+                ? `${ban.name} 밴`
+                : '빈 밴 칸'
+          "
         >
+          <span
+            v-if="ban === 'skipped'"
+            class="ban-skip-mark"
+            aria-label="밴 없음 (시간 초과)"
+          />
           <img
-            v-if="ban"
+            v-else-if="isBanChampion(ban)"
             :src="ban.imageUrl"
             :alt="`${ban.name} 밴 초상화`"
             class="ban-portrait"
@@ -489,9 +812,25 @@ onUnmounted(() => {
           v-for="(ban, index) in displayedBlueBans"
           :key="`blue-ban-${index}`"
           class="ban-slot"
+          :class="{
+            'ban-slot--skipped': ban === 'skipped',
+            'ban-slot--filled': isBanChampion(ban),
+          }"
+          :title="
+            ban === 'skipped'
+              ? '밴 없음 (시간 초과)'
+              : isBanChampion(ban)
+                ? `${ban.name} 밴`
+                : '빈 밴 칸'
+          "
         >
+          <span
+            v-if="ban === 'skipped'"
+            class="ban-skip-mark"
+            aria-label="밴 없음 (시간 초과)"
+          />
           <img
-            v-if="ban"
+            v-else-if="isBanChampion(ban)"
             :src="ban.imageUrl"
             :alt="`${ban.name} 밴 초상화`"
             class="ban-portrait"
@@ -501,8 +840,15 @@ onUnmounted(() => {
     </footer>
 
     <nav class="draft-nav">
-      <RouterLink to="/teams">← 팀 배치</RouterLink>
-      <RouterLink to="/result">경기 결과로 →</RouterLink>
+      <RouterLink to="/teams" class="draft-back">← 팀 배치</RouterLink>
+      <RouterLink
+        v-if="canProceedToResult"
+        to="/result"
+        class="btn-next"
+        @click="onProceedToResult"
+      >
+        다음 →
+      </RouterLink>
     </nav>
   </section>
 </template>
@@ -515,6 +861,7 @@ onUnmounted(() => {
   --draft-blue-dim: rgba(0, 168, 204, 0.15);
   --draft-panel: #161616;
   --draft-panel-border: rgba(255, 255, 255, 0.08);
+  --draft-board-height: min(36rem, calc(100vh - 11rem));
 
   width: 100%;
   max-width: 72rem;
@@ -533,6 +880,17 @@ onUnmounted(() => {
 .draft-match {
   margin: 0;
   letter-spacing: 0.04em;
+}
+
+.peerless-notice {
+  margin: 0;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-input);
+  border: 1px solid rgba(255, 196, 77, 0.45);
+  background: rgba(255, 196, 77, 0.12);
+  font-size: 0.78rem;
+  color: #ffd98a;
+  text-align: center;
 }
 
 .draft-phase {
@@ -584,8 +942,8 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: minmax(7rem, 9rem) 1fr minmax(7rem, 9rem);
   gap: 0.5rem;
-  height: 26rem;
-  min-height: 26rem;
+  height: var(--draft-board-height);
+  min-height: var(--draft-board-height);
   background: var(--draft-panel);
   border: 1px solid var(--draft-panel-border);
 }
@@ -629,8 +987,11 @@ onUnmounted(() => {
   flex: 1;
   min-height: 3.5rem;
   display: flex;
-  align-items: flex-end;
-  padding: 0.35rem 0.45rem;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid var(--draft-panel-border);
 }
@@ -661,20 +1022,104 @@ onUnmounted(() => {
 }
 
 .pick-name {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 0.28rem 0.45rem;
   font-size: 0.72rem;
   line-height: 1.2;
   word-break: break-all;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(0, 0, 0, 0.82);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .side-blue .pick-name {
   text-align: right;
 }
 
+.pick-slot:not(.has-champion) .pick-name {
+  margin-top: auto;
+  background: transparent;
+  border-top: none;
+  padding: 0.35rem 0.45rem;
+}
+
+.pick-position {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.35rem;
+  z-index: 3;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+
+.side-blue .pick-position {
+  left: auto;
+  right: 0.35rem;
+}
+
+.pick-slot.swap-selectable {
+  cursor: pointer;
+}
+
+.pick-slot.swap-selectable:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.pick-slot.swap-selected {
+  box-shadow: inset 0 0 0 2px #d9f9ff;
+  border-color: #d9f9ff;
+}
+
+.swap-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 1.25rem;
+  text-align: center;
+}
+
+.swap-panel-title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: #d9f9ff;
+}
+
+.swap-panel-timer {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.swap-panel-notice,
+.swap-panel-hint {
+  margin: 0;
+  max-width: 22rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.swap-panel-notice {
+  color: #b8f0ff;
+}
+
 .pick-champion-art-wrap {
   position: absolute;
-  inset: 0;
+  inset: 0 0 auto 0;
+  height: calc(100% - 1.65rem);
   overflow: hidden;
+  z-index: 0;
 }
 
 .pick-champion-art {
@@ -682,8 +1127,9 @@ onUnmounted(() => {
   height: 100%;
   display: block;
   object-fit: cover;
-  transform: scale(1.22);
-  transform-origin: center;
+  object-position: center top;
+  transform: scale(1.12);
+  transform-origin: center top;
   filter: saturate(1.06) contrast(1.04);
 }
 
@@ -796,6 +1242,10 @@ onUnmounted(() => {
   transform: none;
 }
 
+.champion-image.peerless-blocked {
+  box-shadow: inset 0 0 0 1px rgba(255, 196, 77, 0.55);
+}
+
 .champion-image.selected {
   border-color: #d9f9ff;
   box-shadow: 0 0 0 2px rgba(217, 249, 255, 0.95);
@@ -843,12 +1293,57 @@ onUnmounted(() => {
   transform: skewX(8deg);
 }
 
+.ban-slot--filled {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.ban-slot--skipped {
+  background: rgba(232, 64, 87, 0.45);
+  border-color: #ff8a98 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+
+.ban-skip-mark {
+  position: relative;
+  width: 62%;
+  height: 62%;
+  flex-shrink: 0;
+  transform: skewX(8deg);
+}
+
+.ban-skip-mark::before,
+.ban-skip-mark::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 3px;
+  background: #fff;
+  border-radius: 1px;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.65);
+}
+
+.ban-skip-mark::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.ban-skip-mark::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
 .ban-red .ban-slot {
   border-color: rgba(232, 64, 87, 0.35);
 }
 
 .ban-blue .ban-slot {
   border-color: rgba(0, 168, 204, 0.35);
+}
+
+.ban-blue .ban-slot.ban-slot--skipped {
+  background: rgba(0, 168, 204, 0.45);
+  border-color: #7ee8ff !important;
 }
 
 .footer-title {
@@ -861,16 +1356,49 @@ onUnmounted(() => {
 
 .draft-nav {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 1rem;
   margin-top: 1rem;
   padding-top: 0.5rem;
 }
 
+.draft-back {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.draft-back:hover {
+  text-decoration: underline;
+}
+
+.btn-next {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.55rem 1.35rem;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter 0.2s;
+}
+
+.btn-next:hover {
+  filter: brightness(1.08);
+}
+
 @media (max-width: 640px) {
+  .draft {
+    --draft-board-height: min(30rem, calc(100vh - 10rem));
+  }
+
   .draft-board {
     grid-template-columns: 5.5rem 1fr 5.5rem;
-    height: 22rem;
-    min-height: 22rem;
   }
 
   .pick-name {
