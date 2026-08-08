@@ -4,8 +4,21 @@ import { RouterLink } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import type { Player } from '@/types/session'
 
+const DRAG_MIME = 'application/x-civilwar-team-player'
+
+type DragSource =
+  | { kind: 'pool' }
+  | { kind: 'slot'; team: 'red' | 'blue'; slotIndex: number }
+
+interface DragPayload {
+  player: Player
+  source: DragSource
+}
+
 const session = useSessionStore()
 const selectedPlayer = ref<Player | null>(null)
+const dragOverTarget = ref<string | null>(null)
+const draggingKey = ref<string | null>(null)
 
 const TEAM_SIZE = 5
 const POSITION_LABELS = ['탑', '정글', '미드', '원딜', '서포터'] as const
@@ -47,6 +60,10 @@ function getSlot(team: 'red' | 'blue', slotIndex: number): Player | undefined {
   return teamList[slotIndex]
 }
 
+function slotTargetKey(team: 'red' | 'blue', slotIndex: number): string {
+  return `slot:${team}:${slotIndex}`
+}
+
 function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
   const slot = getSlot(team, slotIndex)
 
@@ -60,14 +77,120 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
     session.clearSlot(team, slotIndex)
   }
 }
+
+function onDragStart(
+  event: DragEvent,
+  player: Player,
+  source: DragSource,
+) {
+  if (!session.isFilledPlayer(player)) {
+    event.preventDefault()
+    return
+  }
+
+  const payload: DragPayload = { player, source }
+  event.dataTransfer?.setData(DRAG_MIME, JSON.stringify(payload))
+  event.dataTransfer!.effectAllowed = 'move'
+  draggingKey.value = session.playerKey(player)
+  selectedPlayer.value = null
+}
+
+function onDragEnd() {
+  draggingKey.value = null
+  dragOverTarget.value = null
+}
+
+function onDragOver(event: DragEvent, targetKey: string) {
+  event.preventDefault()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move'
+  }
+  dragOverTarget.value = targetKey
+}
+
+function onDragLeave(targetKey: string) {
+  if (dragOverTarget.value === targetKey) {
+    dragOverTarget.value = null
+  }
+}
+
+function parseDragPayload(event: DragEvent): DragPayload | null {
+  const raw = event.dataTransfer?.getData(DRAG_MIME)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as DragPayload
+  } catch {
+    return null
+  }
+}
+
+function onDropToSlot(
+  event: DragEvent,
+  team: 'red' | 'blue',
+  slotIndex: number,
+) {
+  event.preventDefault()
+  dragOverTarget.value = null
+  draggingKey.value = null
+
+  const payload = parseDragPayload(event)
+  if (!payload || !session.isFilledPlayer(payload.player)) return
+
+  if (
+    payload.source.kind === 'slot' &&
+    payload.source.team === team &&
+    payload.source.slotIndex === slotIndex
+  ) {
+    return
+  }
+
+  const targetSlot = getSlot(team, slotIndex)
+  const displaced =
+    targetSlot &&
+    session.isFilledPlayer(targetSlot) &&
+    session.playerKey(targetSlot) !== session.playerKey(payload.player)
+      ? {
+          gameName: targetSlot.gameName,
+          tagLine: targetSlot.tagLine,
+          puuid: targetSlot.puuid,
+          summonerId: targetSlot.summonerId,
+          recentMatchCount: targetSlot.recentMatchCount,
+        }
+      : null
+
+  session.assignPlayer(team, slotIndex, payload.player)
+
+  if (displaced && payload.source.kind === 'slot') {
+    session.assignPlayer(
+      payload.source.team,
+      payload.source.slotIndex,
+      displaced,
+    )
+  }
+
+  selectedPlayer.value = null
+}
+
+function onDropToPool(event: DragEvent) {
+  event.preventDefault()
+  dragOverTarget.value = null
+  draggingKey.value = null
+
+  const payload = parseDragPayload(event)
+  if (!payload || payload.source.kind !== 'slot') return
+
+  session.clearSlot(payload.source.team, payload.source.slotIndex)
+  selectedPlayer.value = null
+}
 </script>
 
 <template>
   <section class="teams">
     <h1>팀 배치</h1>
     <p class="text-hint">
-      가운데 소환사를 선택한 뒤 좌(레드)·우(블루) 칸을 눌러 배치하세요. 배치된 칸을
-      다시 누르면 비웁니다.
+      가운데 소환사를 <strong>클릭</strong>한 뒤 칸을 누르거나,
+      <strong>드래그</strong>해서 좌(레드)·우(블루) 칸에 놓으세요.
+      배치된 칸을 다시 누르면 비우고, 가운데로 드래그해도 풀로 돌아갑니다.
     </p>
 
     <div class="teams-board">
@@ -78,8 +201,29 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
             v-for="slotIndex in TEAM_SIZE"
             :key="`red-${slotIndex - 1}`"
             class="team-slot"
-            :class="{ filled: session.isFilledPlayer(getSlot('red', slotIndex - 1)) }"
+            :class="{
+              filled: session.isFilledPlayer(getSlot('red', slotIndex - 1)),
+              'drop-target':
+                dragOverTarget === slotTargetKey('red', slotIndex - 1),
+              dragging:
+                draggingKey !== null &&
+                session.isFilledPlayer(getSlot('red', slotIndex - 1)) &&
+                session.playerKey(getSlot('red', slotIndex - 1)!) ===
+                  draggingKey,
+            }"
+            :draggable="session.isFilledPlayer(getSlot('red', slotIndex - 1))"
             @click="onSlotClick('red', slotIndex - 1)"
+            @dragstart="
+              onDragStart($event, getSlot('red', slotIndex - 1)!, {
+                kind: 'slot',
+                team: 'red',
+                slotIndex: slotIndex - 1,
+              })
+            "
+            @dragend="onDragEnd"
+            @dragover="onDragOver($event, slotTargetKey('red', slotIndex - 1))"
+            @dragleave="onDragLeave(slotTargetKey('red', slotIndex - 1))"
+            @drop="onDropToSlot($event, 'red', slotIndex - 1)"
           >
             <span class="position-label">{{ POSITION_LABELS[slotIndex - 1] }}</span>
             <span
@@ -93,7 +237,13 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
         </ol>
       </div>
 
-      <div class="pool-column">
+      <div
+        class="pool-column"
+        :class="{ 'drop-target': dragOverTarget === 'pool' }"
+        @dragover="onDragOver($event, 'pool')"
+        @dragleave="onDragLeave('pool')"
+        @drop="onDropToPool"
+      >
         <p v-if="unassignedPlayers.length === 0" class="pool-empty text-label">
           배치할 소환사가 없습니다.<br />
           소환사 입력에서 이름을 먼저 등록하세요.
@@ -103,8 +253,14 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
             <button
               type="button"
               class="pool-player"
-              :class="{ selected: isSelected(player) }"
+              :class="{
+                selected: isSelected(player),
+                dragging: draggingKey === session.playerKey(player),
+              }"
+              draggable="true"
               @click="selectPlayer(player)"
+              @dragstart="onDragStart($event, player, { kind: 'pool' })"
+              @dragend="onDragEnd"
             >
               {{ session.formatPlayerLabel(player) }}
             </button>
@@ -119,8 +275,29 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
             v-for="slotIndex in TEAM_SIZE"
             :key="`blue-${slotIndex - 1}`"
             class="team-slot"
-            :class="{ filled: session.isFilledPlayer(getSlot('blue', slotIndex - 1)) }"
+            :class="{
+              filled: session.isFilledPlayer(getSlot('blue', slotIndex - 1)),
+              'drop-target':
+                dragOverTarget === slotTargetKey('blue', slotIndex - 1),
+              dragging:
+                draggingKey !== null &&
+                session.isFilledPlayer(getSlot('blue', slotIndex - 1)) &&
+                session.playerKey(getSlot('blue', slotIndex - 1)!) ===
+                  draggingKey,
+            }"
+            :draggable="session.isFilledPlayer(getSlot('blue', slotIndex - 1))"
             @click="onSlotClick('blue', slotIndex - 1)"
+            @dragstart="
+              onDragStart($event, getSlot('blue', slotIndex - 1)!, {
+                kind: 'slot',
+                team: 'blue',
+                slotIndex: slotIndex - 1,
+              })
+            "
+            @dragend="onDragEnd"
+            @dragover="onDragOver($event, slotTargetKey('blue', slotIndex - 1))"
+            @dragleave="onDragLeave(slotTargetKey('blue', slotIndex - 1))"
+            @drop="onDropToSlot($event, 'blue', slotIndex - 1)"
           >
             <span class="position-label">{{ POSITION_LABELS[slotIndex - 1] }}</span>
             <span
@@ -205,7 +382,15 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
   border-radius: var(--radius-input);
   background: var(--color-input-bg);
   cursor: pointer;
-  transition: border-color 0.2s, background-color 0.2s;
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.15s;
+}
+
+.team-slot[draggable='true'] {
+  cursor: grab;
+}
+
+.team-slot[draggable='true']:active {
+  cursor: grabbing;
 }
 
 .position-label {
@@ -239,6 +424,17 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
   border-color: var(--color-accent);
 }
 
+.team-slot.drop-target {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  background: rgba(66, 184, 131, 0.12);
+}
+
+.team-slot.dragging,
+.pool-player.dragging {
+  opacity: 0.45;
+}
+
 .slot-label {
   font-size: 0.9rem;
   text-align: center;
@@ -258,7 +454,15 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0 0.5rem;
+  padding: 0.75rem 0.5rem;
+  border-radius: var(--radius-input);
+  border: 2px dashed transparent;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.pool-column.drop-target {
+  border-color: var(--color-accent);
+  background: rgba(66, 184, 131, 0.08);
 }
 
 .pool-empty {
@@ -287,9 +491,13 @@ function onSlotClick(team: 'red' | 'blue', slotIndex: number) {
   background: var(--color-input-bg);
   color: inherit;
   font: inherit;
-  cursor: pointer;
+  cursor: grab;
   text-align: center;
   transition: border-color 0.2s, background-color 0.2s;
+}
+
+.pool-player:active {
+  cursor: grabbing;
 }
 
 .pool-player:hover {

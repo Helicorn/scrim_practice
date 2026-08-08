@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.Optional;
 
 import com.civilwar.api.ApiException;
-import com.civilwar.api.dto.RankStatDto;
-import com.civilwar.api.dto.RefreshSessionRankStatsResponse;
+import com.civilwar.api.dto.response.RankStatDto;
+import com.civilwar.api.dto.response.RefreshSessionRankStatsResponse;
 import com.civilwar.domain.entity.CustomGamePlayerEntity;
 import com.civilwar.domain.entity.SummonerEntity;
 import com.civilwar.domain.entity.SummonerRankStatEntity;
@@ -16,10 +16,8 @@ import com.civilwar.domain.enums.QueueType;
 import com.civilwar.domain.repository.CustomGamePlayerRepository;
 import com.civilwar.domain.repository.CustomGameRepository;
 import com.civilwar.domain.repository.SummonerRankStatRepository;
-import com.civilwar.domain.repository.SummonerRepository;
 import com.civilwar.riot.RiotKrClient;
 import com.civilwar.riot.dto.RiotLeagueEntry;
-import com.civilwar.riot.dto.RiotSummonerV4;
 
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -38,7 +36,6 @@ public class SummonerRankStatRefreshService {
 
 	private final CustomGameRepository customGameRepository;
 	private final CustomGamePlayerRepository customGamePlayerRepository;
-	private final SummonerRepository summonerRepository;
 	private final SummonerRankStatRepository rankStatRepository;
 	private final RiotKrClient riotKrClient;
 	private final SummonerDisplayStatsService displayStatsService;
@@ -46,13 +43,11 @@ public class SummonerRankStatRefreshService {
 	public SummonerRankStatRefreshService(
 			CustomGameRepository customGameRepository,
 			CustomGamePlayerRepository customGamePlayerRepository,
-			SummonerRepository summonerRepository,
 			SummonerRankStatRepository rankStatRepository,
 			RiotKrClient riotKrClient,
 			SummonerDisplayStatsService displayStatsService) {
 		this.customGameRepository = customGameRepository;
 		this.customGamePlayerRepository = customGamePlayerRepository;
-		this.summonerRepository = summonerRepository;
 		this.rankStatRepository = rankStatRepository;
 		this.riotKrClient = riotKrClient;
 		this.displayStatsService = displayStatsService;
@@ -102,6 +97,9 @@ public class SummonerRankStatRefreshService {
 				if (saved.isPresent()) {
 					refreshed += 1;
 					rankStats.add(saved.get());
+				} else if (summoner.getPuuid() == null || summoner.getPuuid().isBlank()) {
+					skipped += 1;
+					skipReasons.add(label + ": PUUID 없음 — 랭크 조회 불가");
 				} else {
 					skipped += 1;
 					skipReasons.add(label + ": 랭크 전적 없음 (솔랭·자랭 미배치)");
@@ -109,6 +107,9 @@ public class SummonerRankStatRefreshService {
 			} catch (RestClientResponseException ex) {
 				skipped += 1;
 				skipReasons.add(label + ": Riot API 오류 (" + ex.getStatusCode().value() + ")");
+			} catch (IllegalArgumentException ex) {
+				skipped += 1;
+				skipReasons.add(label + ": " + ex.getMessage());
 			}
 		}
 
@@ -121,16 +122,7 @@ public class SummonerRankStatRefreshService {
 			return Optional.empty();
 		}
 
-		Optional<RiotSummonerV4> riotSummoner = riotKrClient.findSummonerByPuuid(apiKey, puuid);
-		if (riotSummoner.isEmpty()) {
-			return Optional.empty();
-		}
-
-		summoner.setRiotSummonerId(riotSummoner.get().id());
-		summonerRepository.save(summoner);
-
-		List<RiotLeagueEntry> entries =
-				riotKrClient.findLeagueEntriesBySummonerId(apiKey, riotSummoner.get().id());
+		List<RiotLeagueEntry> entries = riotKrClient.findLeagueEntriesByPuuid(apiKey, puuid);
 		Optional<RiotLeagueEntry> picked = pickRankedEntry(entries);
 		if (picked.isEmpty()) {
 			return Optional.empty();

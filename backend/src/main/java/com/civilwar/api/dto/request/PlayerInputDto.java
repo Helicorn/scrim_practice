@@ -1,4 +1,4 @@
-package com.civilwar.api.dto;
+package com.civilwar.api.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;

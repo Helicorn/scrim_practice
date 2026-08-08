@@ -351,9 +351,18 @@ export const useSessionStore = defineStore('session', () => {
     resetDraftAndResultState()
   }
 
+  function areRosterComplete(): boolean {
+    ensurePlayers()
+    return (
+      players.value.length === PLAYER_COUNT &&
+      players.value.every((player) => isFilledPlayer(player))
+    )
+  }
+
   function areTeamsComplete(): boolean {
     ensurePlayers()
     ensureTeams()
+    if (!areRosterComplete()) return false
     const unassigned = players.value.filter(
       (player) => isFilledPlayer(player) && !isOnTeam(player),
     )
@@ -381,12 +390,17 @@ export const useSessionStore = defineStore('session', () => {
     resetMatchFlowState()
   }
 
+  /** 로스터(10인) 확정 시 진행 중 내전으로 커밋 */
   function commitActiveSession(): boolean {
     if (!sessionId.value || !seriesType.value) return false
-    if (!areTeamsComplete()) return false
+    if (!areRosterComplete()) return false
     committed.value = true
     persistSessionMeta()
     return true
+  }
+
+  function continueRouteName(): 'teams' | 'draft' {
+    return areTeamsComplete() ? 'draft' : 'teams'
   }
 
   /** 진행 중 내전 세션·입력 중 데이터 삭제 (저장된 경기 히스토리·API Key는 유지) */
@@ -414,8 +428,15 @@ export const useSessionStore = defineStore('session', () => {
     if (!committed.value) {
       return `${cfg.label}${peerlessLabel} · 설정 중`
     }
+    if (!areTeamsComplete()) {
+      return `${cfg.label}${peerlessLabel} · 로스터 확정 · 팀 배치 중`
+    }
     const score = `RED ${redSeriesWins.value} - ${blueSeriesWins.value} BLUE`
-    return `${cfg.label}${peerlessLabel} · ${currentGame.value}/${cfg.maxGames}판 · ${score}`
+    const gameLabel =
+      cfg.maxGames == null
+        ? `${currentGame.value}판`
+        : `${currentGame.value}/${cfg.maxGames}판`
+    return `${cfg.label}${peerlessLabel} · ${gameLabel} · ${score}`
   }
 
   function persistMatchHistory() {
@@ -467,12 +488,17 @@ export const useSessionStore = defineStore('session', () => {
 
     const cfg = SERIES_CONFIG[seriesType.value]
     const seriesDone =
-      redSeriesWins.value >= cfg.winsRequired ||
-      blueSeriesWins.value >= cfg.winsRequired
+      cfg.winsRequired != null &&
+      (redSeriesWins.value >= cfg.winsRequired ||
+        blueSeriesWins.value >= cfg.winsRequired)
 
     let shouldGoToDraft = false
 
-    if (!seriesDone && currentGame.value < cfg.maxGames) {
+    const canContinue =
+      !seriesDone &&
+      (cfg.maxGames == null || currentGame.value < cfg.maxGames)
+
+    if (canContinue) {
       if (peerless.value && draft.value?.usedChampionIds?.length) {
         recordPeerlessChampions(draft.value.usedChampionIds)
       }
@@ -512,6 +538,8 @@ export const useSessionStore = defineStore('session', () => {
     peerlessUsedChampionIds,
     beginSetup,
     commitActiveSession,
+    continueRouteName,
+    areRosterComplete,
     areTeamsComplete,
     clearActiveSession,
     formatSessionSummary,

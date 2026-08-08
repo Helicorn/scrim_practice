@@ -257,6 +257,12 @@ async function onNext() {
         await refreshSessionRankStats(session.sessionId, session.riotApiKey)
       }
       await loadSavedSummoners()
+      if (!session.commitActiveSession()) {
+        openModal('세션 저장 실패', [
+          '로스터가 확정되지 않아 진행 중 내전으로 저장하지 못했습니다.',
+        ])
+        return
+      }
     } catch (error) {
       openModal('DB 저장 실패', [mapSessionApiErrorMessage(error)])
       return

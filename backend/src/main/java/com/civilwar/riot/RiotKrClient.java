@@ -35,9 +35,10 @@ public class RiotKrClient {
 		return getOptional(apiKey, url, RiotSummonerV4.class);
 	}
 
-	public List<RiotLeagueEntry> findLeagueEntriesBySummonerId(String apiKey, String encryptedSummonerId) {
-		String url = krBaseUrl + "/lol/league/v4/entries/by-summoner/"
-				+ encodePath(encryptedSummonerId);
+	/** Riot이 summoner id를 제거한 뒤 권장되는 랭크 조회 경로 */
+	public List<RiotLeagueEntry> findLeagueEntriesByPuuid(String apiKey, String puuid) {
+		String url = krBaseUrl + "/lol/league/v4/entries/by-puuid/"
+				+ encodePath(puuid);
 		RiotLeagueEntry[] entries = get(apiKey, url, RiotLeagueEntry[].class);
 		if (entries == null || entries.length == 0) {
 			return List.of();
@@ -66,6 +67,9 @@ public class RiotKrClient {
 	}
 
 	private static String encodePath(String value) {
+		if (value == null || value.isBlank()) {
+			throw new IllegalArgumentException("Riot API path segment must not be blank");
+		}
 		return UriUtils.encodePathSegment(value.trim(), StandardCharsets.UTF_8);
 	}
 }

@@ -47,7 +47,7 @@ erDiagram
 | 프론트 (Pinia) | DB |
 |----------------|-----|
 | `sessionId` | `CUSTOM_GAME.SESSION_CODE` |
-| `seriesType` single/bo3/bo5 | `SERIES_TYPE` SINGLE/BO3/BO5 |
+| `seriesType` single/bo3/bo5/unlimited | `SERIES_TYPE` SINGLE/BO3/BO5/UNLIMITED |
 | `peerless` | `PEERLESS_YN` Y/N |
 | `currentGame` | `CURRENT_MATCH_NO` |
 | `redSeriesWins` / `blueSeriesWins` | `RED_SERIES_WINS` / `BLUE_SERIES_WINS` |

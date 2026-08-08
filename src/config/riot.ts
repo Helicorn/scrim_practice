@@ -4,11 +4,6 @@ export const LOL_MATCH_HISTORY_BASE_URL = 'https://asia.api.riotgames.com'
 export const LOL_MATCH_HISTORY_ACCOUNT_V1_URL =
   '/riot/account/v1/accounts/by-riot-id/'
 
-export const LOL_MATCH_V5_IDS_BY_PUUID_URL =
-  '/lol/match/v5/matches/by-puuid/'
-
-export const LOL_MATCH_V5_MATCH_BY_ID_URL = '/lol/match/v5/matches/'
-
 export const RIOT_TOKEN_HEADER = 'X-Riot-Token'
 
 /** Vite dev proxy 경로 (브라우저 CORS 우회) */

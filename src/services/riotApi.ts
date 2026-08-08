@@ -1,8 +1,6 @@
 import {
   getRiotApiBaseUrl,
   LOL_MATCH_HISTORY_ACCOUNT_V1_URL,
-  LOL_MATCH_V5_IDS_BY_PUUID_URL,
-  LOL_MATCH_V5_MATCH_BY_ID_URL,
   RIOT_TOKEN_HEADER,
 } from '@/config/riot'
 import type { RiotAccount, RiotApiErrorBody } from '@/types/riot'
@@ -68,30 +66,6 @@ export async function getAccountByRiotId(
     }
     throw error
   }
-}
-
-/** PUUID → 최근 매치 ID 목록 */
-export async function getMatchIdsByPuuid(
-  apiKey: string,
-  puuid: string,
-  start = 0,
-  count = 20,
-): Promise<string[]> {
-  const query = new URLSearchParams({
-    start: String(start),
-    count: String(count),
-  })
-  const path = `${LOL_MATCH_V5_IDS_BY_PUUID_URL}${encodeURIComponent(puuid)}/ids?${query}`
-  return riotFetch<string[]>(apiKey, path)
-}
-
-/** 매치 ID → 상세 전적 */
-export async function getMatchById(
-  apiKey: string,
-  matchId: string,
-): Promise<unknown> {
-  const path = `${LOL_MATCH_V5_MATCH_BY_ID_URL}${encodeURIComponent(matchId)}`
-  return riotFetch<unknown>(apiKey, path)
 }
 
 export function mapRiotApiErrorMessage(error: unknown): string {

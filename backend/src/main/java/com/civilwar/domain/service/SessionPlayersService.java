@@ -4,9 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.civilwar.api.ApiException;
-import com.civilwar.api.dto.PlayerInputDto;
-import com.civilwar.api.dto.RegisterSessionPlayersResponse;
-import com.civilwar.api.dto.SummonerSavedDto;
+import com.civilwar.api.dto.request.PlayerInputDto;
+import com.civilwar.api.dto.response.RegisterSessionPlayersResponse;
+import com.civilwar.api.dto.response.SummonerSavedDto;
 import com.civilwar.domain.entity.CustomGameEntity;
 import com.civilwar.domain.entity.CustomGamePlayerEntity;
 import com.civilwar.domain.entity.SummonerCustomStatEntity;
@@ -135,6 +135,7 @@ public class SessionPlayersService {
 			case "single" -> SeriesType.SINGLE;
 			case "bo3" -> SeriesType.BO3;
 			case "bo5" -> SeriesType.BO5;
+			case "unlimited" -> SeriesType.UNLIMITED;
 			default -> throw new ApiException(
 					HttpStatus.BAD_REQUEST,
 					"지원하지 않는 seriesType입니다: " + raw);

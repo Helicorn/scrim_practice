@@ -1,6 +1,6 @@
 package com.civilwar.api;
 
-import com.civilwar.api.dto.RefreshSessionRankStatsResponse;
+import com.civilwar.api.dto.response.RefreshSessionRankStatsResponse;
 import com.civilwar.domain.service.SummonerRankStatRefreshService;
 
 import org.springframework.context.annotation.Profile;

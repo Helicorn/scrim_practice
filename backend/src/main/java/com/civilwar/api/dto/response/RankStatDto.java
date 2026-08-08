@@ -1,4 +1,4 @@
-package com.civilwar.api.dto;
+package com.civilwar.api.dto.response;
 
 public record RankStatDto(
 		long summonerId,

@@ -2,9 +2,9 @@ package com.civilwar.api;
 
 import java.util.List;
 
-import com.civilwar.api.dto.CheckRiotNeedsRequest;
-import com.civilwar.api.dto.CheckRiotNeedsResponse;
-import com.civilwar.api.dto.SavedSummonerDto;
+import com.civilwar.api.dto.request.CheckRiotNeedsRequest;
+import com.civilwar.api.dto.response.CheckRiotNeedsResponse;
+import com.civilwar.api.dto.response.SavedSummonerDto;
 import com.civilwar.domain.service.SummonerCatalogService;
 
 import jakarta.validation.Valid;

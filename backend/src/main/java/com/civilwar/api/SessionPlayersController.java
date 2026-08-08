@@ -1,7 +1,7 @@
 package com.civilwar.api;
 
-import com.civilwar.api.dto.RegisterSessionPlayersRequest;
-import com.civilwar.api.dto.RegisterSessionPlayersResponse;
+import com.civilwar.api.dto.request.RegisterSessionPlayersRequest;
+import com.civilwar.api.dto.response.RegisterSessionPlayersResponse;
 import com.civilwar.domain.service.SessionPlayersService;
 
 import jakarta.validation.Valid;

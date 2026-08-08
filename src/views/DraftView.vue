@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import {
+  mapPickBanApiErrorMessage,
+  saveSessionPickBan,
+  type PickBanTurnInput,
+} from '@/services/sessionApi'
+import { matchesChampionSearch } from '@/data/championSearch'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -27,10 +33,10 @@ const pickBanOrder = [
   { team: 'RED', type: 'PICK' },
   { team: 'BLUE', type: 'PICK' },
 
-  { team: 'RED', type: 'BAN' },
   { team: 'BLUE', type: 'BAN' },
   { team: 'RED', type: 'BAN' },
   { team: 'BLUE', type: 'BAN' },
+  { team: 'RED', type: 'BAN' },
 
   { team: 'RED', type: 'PICK' },
   { team: 'BLUE', type: 'PICK' },
@@ -83,6 +89,10 @@ const redBanCount = ref(0)
 const blueBanCount = ref(0)
 const redPickCount = ref(0)
 const bluePickCount = ref(0)
+const redPickOrder = ref<ChampionPortrait[]>([])
+const bluePickOrder = ref<ChampionPortrait[]>([])
+const isSavingPickBan = ref(false)
+const pickBanSavedMatchNo = ref<number | null>(null)
 const isSwapPhaseActive = ref(false)
 const isSwapPhaseComplete = ref(false)
 const swapRemainingSeconds = ref(0)
@@ -93,15 +103,12 @@ let countdownTimer: ReturnType<typeof setInterval> | null = null
 let swapCountdownTimer: ReturnType<typeof setInterval> | null = null
 
 const filteredChampionPortraits = computed(() => {
-  const query = championSearchQuery.value.trim().toLowerCase()
+  const query = championSearchQuery.value.trim()
   if (!query) return championPortraits.value
 
-  return championPortraits.value.filter((champion) => {
-    return (
-      champion.name.toLowerCase().includes(query) ||
-      champion.id.toLowerCase().includes(query)
-    )
-  })
+  return championPortraits.value.filter((champion) =>
+    matchesChampionSearch(champion, query),
+  )
 })
 
 const phaseTimerText = computed(() => {
@@ -183,10 +190,124 @@ function collectUsedChampionIds(): string[] {
   ]
 }
 
+function toDraftPick(
+  champion: ChampionPortrait | null,
+): { id: string; name: string; imageUrl: string } | null {
+  if (!champion) return null
+  return {
+    id: champion.id,
+    name: champion.name,
+    imageUrl: champion.imageUrl,
+  }
+}
+
 function syncDraftToSession() {
   session.draft = {
     completed: true,
     usedChampionIds: collectUsedChampionIds(),
+    redPicks: redPicks.value.map(toDraftPick),
+    bluePicks: bluePicks.value.map(toDraftPick),
+  }
+}
+
+function findSlotForChampion(team: 'RED' | 'BLUE', championId: string): number {
+  const picks = team === 'RED' ? redPicks.value : bluePicks.value
+  return picks.findIndex((champion) => champion?.id === championId)
+}
+
+function getSummonerIdForSlot(
+  team: 'RED' | 'BLUE',
+  slotIndex: number,
+): number | undefined {
+  if (slotIndex < 0) return undefined
+  const slot = getSlot(team === 'RED' ? 'red' : 'blue', slotIndex)
+  return slot.summonerId
+}
+
+function buildPickBanTurnsPayload(): PickBanTurnInput[] {
+  const turns: PickBanTurnInput[] = []
+  let redBanIndex = 0
+  let blueBanIndex = 0
+  let redPickIndex = 0
+  let bluePickIndex = 0
+
+  for (let phaseIndex = 0; phaseIndex < pickBanOrder.length; phaseIndex += 1) {
+    const phase = pickBanOrder[phaseIndex]
+    const turnNo = phaseIndex + 1
+
+    if (phase.type === 'BAN') {
+      const ban =
+        phase.team === 'RED'
+          ? redBans.value[redBanIndex]
+          : blueBans.value[blueBanIndex]
+      if (phase.team === 'RED') redBanIndex += 1
+      else blueBanIndex += 1
+
+      if (!isBanChampion(ban)) continue
+
+      turns.push({
+        turnNo,
+        teamColor: phase.team,
+        actionType: 'BAN',
+        championKey: ban.id,
+        championNameKr: ban.name,
+        imageUrl: ban.imageUrl,
+      })
+      continue
+    }
+
+    const pick =
+      phase.team === 'RED'
+        ? redPickOrder.value[redPickIndex]
+        : bluePickOrder.value[bluePickIndex]
+    if (phase.team === 'RED') redPickIndex += 1
+    else bluePickIndex += 1
+
+    if (!pick) continue
+
+    const slotIndex = findSlotForChampion(phase.team, pick.id)
+    const summonerId = getSummonerIdForSlot(phase.team, slotIndex)
+
+    turns.push({
+      turnNo,
+      teamColor: phase.team,
+      actionType: 'PICK',
+      championKey: pick.id,
+      championNameKr: pick.name,
+      imageUrl: pick.imageUrl,
+      summonerId,
+    })
+  }
+
+  return turns
+}
+
+async function persistPickBanToServer(): Promise<boolean> {
+  if (!session.sessionId || !session.committed) return true
+
+  const turns = buildPickBanTurnsPayload()
+  if (turns.length === 0) return true
+
+  // 스왑 종료 + 다음 버튼에서 이중 호출될 수 있음
+  if (pickBanSavedMatchNo.value === session.currentGame) {
+    return true
+  }
+
+  isSavingPickBan.value = true
+  try {
+    const result = await saveSessionPickBan(
+      session.sessionId,
+      session.currentGame,
+      turns,
+    )
+    pickBanSavedMatchNo.value = result.matchNo
+    confirmNotice.value = `밴픽 DB 저장 완료 · ${result.savedTurns}턴 (경기 ${result.matchNo})`
+    return true
+  } catch (error) {
+    confirmNotice.value = mapPickBanApiErrorMessage(error)
+    return false
+  } finally {
+    isSavingPickBan.value = false
   }
 }
 
@@ -242,7 +363,6 @@ onMounted(() => {
     void router.replace('/teams')
     return
   }
-  session.commitActiveSession()
   void loadChampionPortraits()
 })
 
@@ -314,12 +434,14 @@ function applyPick(team: 'RED' | 'BLUE', championId: string): boolean {
   if (team === 'RED') {
     if (redPickCount.value >= TEAM_SIZE) return false
     redPicks.value[redPickCount.value] = champion
+    redPickOrder.value = [...redPickOrder.value, champion]
     redPickCount.value += 1
     return true
   }
 
   if (bluePickCount.value >= TEAM_SIZE) return false
   bluePicks.value[bluePickCount.value] = champion
+  bluePickOrder.value = [...bluePickOrder.value, champion]
   bluePickCount.value += 1
   return true
 }
@@ -355,17 +477,22 @@ function startSwapCountdown() {
   swapCountdownTimer = setInterval(tickSwapCountdown, 1000)
 }
 
-function onSwapPhaseExpired() {
+async function onSwapPhaseExpired() {
   stopSwapCountdown()
   isSwapPhaseActive.value = false
   isSwapPhaseComplete.value = true
   selectedSwapSlot.value = null
   syncDraftToSession()
-  confirmNotice.value = '스왑 시간이 종료되었습니다.'
+  confirmNotice.value = '스왑 시간이 종료되었습니다. 결과 화면으로 이동합니다.'
+  await onProceedToResult()
 }
 
-function onProceedToResult() {
+async function onProceedToResult() {
   syncDraftToSession()
+  const saved = await persistPickBanToServer()
+  if (saved) {
+    await router.push('/result')
+  }
 }
 
 function startSwapPhase() {
@@ -510,6 +637,9 @@ function startDraft() {
   blueBanCount.value = 0
   redPickCount.value = 0
   bluePickCount.value = 0
+  redPickOrder.value = []
+  bluePickOrder.value = []
+  pickBanSavedMatchNo.value = null
   isSwapPhaseActive.value = false
   isSwapPhaseComplete.value = false
   swapRemainingSeconds.value = 0
@@ -648,84 +778,89 @@ onUnmounted(() => {
       <div class="draft-center">
         <div class="champion-portrait" aria-label="챔피언 초상화 영역">
           <div v-if="!isSwapPhaseActive" class="champion-search-wrap">
-            <div class="champion-search-row">
-              <input
-                v-model.trim="championSearchQuery"
-                type="text"
-                class="champion-search input-field"
-                placeholder="챔피언 검색 (예: 아리, ahri)"
-                aria-label="챔피언 이름 검색"
-              />
-              <button
-                type="button"
-                class="btn-confirm-pick"
-                :disabled="!isDraftStarted || isDraftComplete"
-                @click="confirmBanPick"
-              >
-                확인
-              </button>
-            </div>
+            <input
+              v-model.trim="championSearchQuery"
+              type="text"
+              class="champion-search input-field"
+              placeholder="챔피언 검색 (예: 트페, 트티드, ahri)"
+              aria-label="챔피언 이름 검색"
+            />
           </div>
           <!-- <p v-if="confirmNotice" class="confirm-notice" role="status">
             {{ confirmNotice }}
           </p> -->
-          <div
-            v-if="isSwapPhaseActive"
-            class="swap-panel"
-            role="status"
-          >
-            <p class="swap-panel-title">챔피언 위치 스왑</p>
-            <p class="swap-panel-timer">
-              남은 시간 {{ swapRemainingSeconds }}초
-            </p>
-            <!-- <p v-if="confirmNotice" class="swap-panel-notice">
-              {{ confirmNotice }}
-            </p>
-            <p v-else class="swap-panel-hint">
-              같은 팀 슬롯 두 개를 클릭해 챔피언을 맞바꿀 수 있습니다.
-            </p> -->
-          </div>
-          <p v-else-if="isLoadingChampions" class="portrait-state text-label">
-            챔피언 정보를 불러오는 중...
-          </p>
-          <p v-else-if="championLoadError" class="portrait-state portrait-error">
-            {{ championLoadError }}
-          </p>
-          <p v-else-if="filteredChampionPortraits.length === 0" class="portrait-state text-label">
-            검색 결과가 없습니다.
-          </p>
-          <ul
-            v-else
-            class="champion-grid"
-            :style="{ '--champion-columns': String(CHAMPION_COLUMNS) }"
-          >
-            <li
-              v-for="champion in filteredChampionPortraits"
-              :key="champion.id"
-              class="champion-cell"
+          <div class="champion-grid-shell">
+            <div
+              v-if="isSwapPhaseActive"
+              class="swap-panel"
+              role="status"
             >
-              <img
-                :src="champion.imageUrl"
-                :alt="`${champion.name} 초상화`"
-                class="champion-image"
-                :class="{
-                  selectable: isDraftStarted && !isDraftComplete,
-                  selected: selectedChampionId === champion.id,
-                  unavailable: unavailableChampionIds.has(champion.id),
-                  'peerless-blocked': isPeerlessBlockedChampion(champion.id),
-                }"
-                :title="
-                  isPeerlessBlockedChampion(champion.id)
-                    ? `${champion.name} · 피어리스 (이전 경기 픽)`
-                    : unavailableChampionIds.has(champion.id)
-                      ? `${champion.name} · 선택 불가`
-                      : champion.name
-                "
-                loading="lazy"
-                @click="onChampionClick(champion.id)"
-              />
-            </li>
-          </ul>
+              <p class="swap-panel-title">챔피언 위치 스왑</p>
+              <p class="swap-panel-timer">
+                남은 시간 {{ swapRemainingSeconds }}초
+              </p>
+              <!-- <p v-if="confirmNotice" class="swap-panel-notice">
+                {{ confirmNotice }}
+              </p>
+              <p v-else class="swap-panel-hint">
+                같은 팀 슬롯 두 개를 클릭해 챔피언을 맞바꿀 수 있습니다.
+              </p> -->
+            </div>
+            <p v-else-if="isLoadingChampions" class="portrait-state text-label">
+              챔피언 정보를 불러오는 중...
+            </p>
+            <p v-else-if="championLoadError" class="portrait-state portrait-error">
+              {{ championLoadError }}
+            </p>
+            <p
+              v-else-if="filteredChampionPortraits.length === 0"
+              class="portrait-state text-label"
+            >
+              검색 결과가 없습니다.
+            </p>
+            <ul
+              v-else
+              class="champion-grid"
+              :style="{ '--champion-columns': String(CHAMPION_COLUMNS) }"
+            >
+              <li
+                v-for="champion in filteredChampionPortraits"
+                :key="champion.id"
+                class="champion-cell"
+              >
+                <img
+                  :src="champion.imageUrl"
+                  :alt="`${champion.name} 초상화`"
+                  class="champion-image"
+                  :class="{
+                    selectable: isDraftStarted && !isDraftComplete,
+                    selected: selectedChampionId === champion.id,
+                    unavailable: unavailableChampionIds.has(champion.id),
+                    'peerless-blocked': isPeerlessBlockedChampion(champion.id),
+                  }"
+                  :title="
+                    isPeerlessBlockedChampion(champion.id)
+                      ? `${champion.name} · 피어리스 (이전 경기 픽)`
+                      : unavailableChampionIds.has(champion.id)
+                        ? `${champion.name} · 선택 불가`
+                        : champion.name
+                  "
+                  loading="lazy"
+                  @click="onChampionClick(champion.id)"
+                />
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div v-if="!isSwapPhaseActive" class="confirm-pick-wrap">
+          <button
+            type="button"
+            class="btn-confirm-pick"
+            :disabled="!isDraftStarted || isDraftComplete"
+            @click="confirmBanPick"
+          >
+            확인
+          </button>
         </div>
       </div>
 
@@ -841,14 +976,15 @@ onUnmounted(() => {
 
     <nav class="draft-nav">
       <RouterLink to="/teams" class="draft-back">← 팀 배치</RouterLink>
-      <RouterLink
+      <button
         v-if="canProceedToResult"
-        to="/result"
+        type="button"
         class="btn-next"
+        :disabled="isSavingPickBan"
         @click="onProceedToResult"
       >
-        다음 →
-      </RouterLink>
+        {{ isSavingPickBan ? '저장 중…' : '다음 →' }}
+      </button>
     </nav>
   </section>
 </template>
@@ -867,6 +1003,7 @@ onUnmounted(() => {
   max-width: 72rem;
   margin: 0 auto;
   text-align: left;
+  box-sizing: border-box;
 }
 
 .draft-header {
@@ -940,10 +1077,12 @@ onUnmounted(() => {
 
 .draft-board {
   display: grid;
-  grid-template-columns: minmax(7rem, 9rem) 1fr minmax(7rem, 9rem);
+  grid-template-columns: minmax(7rem, 9rem) minmax(0, 1fr) minmax(7rem, 9rem);
   gap: 0.5rem;
+  width: 100%;
   height: var(--draft-board-height);
   min-height: var(--draft-board-height);
+  box-sizing: border-box;
   background: var(--draft-panel);
   border: 1px solid var(--draft-panel-border);
 }
@@ -1135,24 +1274,34 @@ onUnmounted(() => {
 
 .draft-center {
   display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
   min-height: 0;
   padding: 0.35rem;
+  box-sizing: border-box;
   background: #0d0d0d;
 }
 
 .champion-portrait {
   flex: 1;
-  min-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.35rem;
+  box-sizing: border-box;
   background: #000;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .champion-search-wrap {
+  flex-shrink: 0;
+  width: 100%;
   position: sticky;
   top: 0;
   z-index: 1;
@@ -1160,44 +1309,25 @@ onUnmounted(() => {
   background: #000;
 }
 
-.champion-search-row {
-  display: flex;
-  gap: 0.35rem;
-}
-
-.champion-search {
+.champion-grid-shell {
   flex: 1;
-}
-
-.btn-confirm-pick {
-  flex-shrink: 0;
-  padding: 0 0.8rem;
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-input);
-  background: var(--color-accent);
-  color: #fff;
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.btn-confirm-pick:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.confirm-notice {
-  margin: 0.25rem 0 0;
-  color: var(--color-accent);
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .portrait-state {
   margin: 0;
-  height: 100%;
+  flex: 1;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
+  box-sizing: border-box;
 }
 
 .portrait-error {
@@ -1209,9 +1339,52 @@ onUnmounted(() => {
   list-style: none;
   margin: 0;
   padding: 0;
+  width: 100%;
   display: grid;
   grid-template-columns: repeat(var(--champion-columns), minmax(0, 1fr));
   gap: 0.2rem;
+  align-content: start;
+  box-sizing: border-box;
+}
+
+.champion-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.confirm-pick-wrap {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0.45rem 0 0.15rem;
+}
+
+.btn-confirm-pick {
+  min-width: 8.5rem;
+  padding: 0.55rem 1.75rem 0.5rem;
+  border: none;
+  clip-path: polygon(0 0, 100% 0, 92% 100%, 8% 100%);
+  background: var(--color-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+
+.btn-confirm-pick:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn-confirm-pick:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.confirm-notice {
+  margin: 0.25rem 0 0;
+  color: var(--color-accent);
 }
 
 .champion-cell {

@@ -48,7 +48,7 @@ function onStart() {
 
 function onContinue() {
   if (!session.hasActiveSession) return
-  router.push('/draft')
+  router.push(`/${session.continueRouteName()}`)
 }
 </script>
 
@@ -75,7 +75,7 @@ function onContinue() {
       :open="showDismissModal"
       title="진행 중인 내전 삭제"
       :messages="[
-        '저장된 진행 정보(소환사·팀·시리즈 점수)가 모두 삭제됩니다.',
+        '저장된 진행 정보(소환사 로스터·팀·시리즈 점수)가 모두 삭제됩니다.',
         '이미 저장한 경기 결과 기록은 유지됩니다.',
         '삭제 후에는 새 내전을 시작하거나 다시 설정할 수 있습니다.',
       ]"
@@ -103,7 +103,7 @@ function onContinue() {
           />
           <span class="series-name">{{ opt.label }}</span>
           <span class="series-desc text-label">
-            {{ opt.winsRequired }}승 · 최대 {{ opt.maxGames }}판
+            {{ opt.description }}
           </span>
         </label>
       </div>

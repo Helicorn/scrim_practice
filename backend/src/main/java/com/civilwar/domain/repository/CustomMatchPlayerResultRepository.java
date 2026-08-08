@@ -11,4 +11,8 @@ public interface CustomMatchPlayerResultRepository
 
 	List<CustomMatchPlayerResultEntity> findByMatch_MatchIdOrderByTeamColorAscSummoner_SummonerIdAsc(
 			Long matchId);
+
+	List<CustomMatchPlayerResultEntity> findBySummoner_SummonerId(Long summonerId);
+
+	void deleteByMatch_MatchId(Long matchId);
 }

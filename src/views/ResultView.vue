@@ -1,21 +1,42 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import {
+  mapMatchResultApiErrorMessage,
+  saveSessionMatchResult,
+  type MatchPlayerResultInput,
+} from '@/services/sessionApi'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
 const router = useRouter()
 const saveMessage = ref('')
 const saveError = ref('')
+const isSaving = ref(false)
 const TEAM_SIZE = 5
+const POSITION_NAMES = [
+  'TOP',
+  'JUNGLE',
+  'MID',
+  'ADC',
+  'SUPPORT',
+] as const
 
 session.ensurePlayers()
 session.ensureTeams()
 session.ensureMatchResult()
 
+const redPicks = computed(() => session.draft?.redPicks ?? [])
+const bluePicks = computed(() => session.draft?.bluePicks ?? [])
+
 function getSlot(team: 'red' | 'blue', index: number) {
   const list = team === 'red' ? session.redTeam : session.blueTeam
   return list[index]
+}
+
+function getPickedChampion(team: 'red' | 'blue', index: number) {
+  const picks = team === 'red' ? redPicks.value : bluePicks.value
+  return picks[index] ?? null
 }
 
 function isWinner(team: 'red' | 'blue'): boolean {
@@ -33,21 +54,91 @@ function onWinnerChange(team: 'red' | 'blue', event: Event) {
   }
 }
 
-function onSaveMatch() {
+function parseOptionalInt(raw: string | undefined): number | null {
+  const value = raw?.trim() ?? ''
+  if (!value) return null
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildPlayerResults(
+  team: 'red' | 'blue',
+): { ok: true; players: MatchPlayerResultInput[] } | { ok: false; message: string } {
+  const players: MatchPlayerResultInput[] = []
+  for (let i = 0; i < TEAM_SIZE; i += 1) {
+    const slot = getSlot(team, i)
+    if (!session.isFilledPlayer(slot) || slot?.summonerId == null) {
+      return {
+        ok: false,
+        message: `${team === 'red' ? 'RED' : 'BLUE'} ${POSITION_NAMES[i]} 슬롯의 소환사 DB ID가 없습니다. 소환사 입력에서 다시 저장해 주세요.`,
+      }
+    }
+    const pick = getPickedChampion(team, i)
+    const kda = session.getKda(team, i)
+    players.push({
+      summonerId: slot.summonerId,
+      teamColor: team === 'red' ? 'RED' : 'BLUE',
+      positionName: POSITION_NAMES[i],
+      championKey: pick?.id,
+      championNameKr: pick?.name,
+      imageUrl: pick?.imageUrl,
+      kills: parseOptionalInt(kda.kills),
+      deaths: parseOptionalInt(kda.deaths),
+      assists: parseOptionalInt(kda.assists),
+    })
+  }
+  return { ok: true, players }
+}
+
+async function onSaveMatch() {
   saveMessage.value = ''
   saveError.value = ''
 
-  const result = session.saveMatchToHistory()
-  if (result.ok) {
-    if (result.shouldGoToDraft) {
-      saveMessage.value = `경기 결과를 저장했습니다. 다음 경기 밴픽으로 이동합니다. (${session.formatSessionSummary()})`
-      void router.push('/draft')
-      return
-    }
-    saveMessage.value = `경기 결과를 저장했습니다. (총 ${session.matchHistory.length}경기)`
+  const winner = session.matchResult?.winner
+  if (!winner) {
+    saveError.value = '승리 팀을 선택해 주세요.'
     return
   }
-  saveError.value = result.message
+  if (!session.sessionId || !session.committed) {
+    saveError.value = '밴픽 화면까지 진행한 뒤 경기 결과를 저장할 수 있습니다.'
+    return
+  }
+
+  const red = buildPlayerResults('red')
+  if (!red.ok) {
+    saveError.value = red.message
+    return
+  }
+  const blue = buildPlayerResults('blue')
+  if (!blue.ok) {
+    saveError.value = blue.message
+    return
+  }
+
+  isSaving.value = true
+  try {
+    await saveSessionMatchResult(session.sessionId, {
+      matchNo: session.currentGame,
+      winTeamColor: winner === 'red' ? 'RED' : 'BLUE',
+      players: [...red.players, ...blue.players],
+    })
+
+    const result = session.saveMatchToHistory()
+    if (result.ok) {
+      if (result.shouldGoToDraft) {
+        saveMessage.value = `경기 결과를 저장했습니다. 다음 경기 밴픽으로 이동합니다. (${session.formatSessionSummary()})`
+        void router.push('/draft')
+        return
+      }
+      saveMessage.value = `경기 결과를 저장했습니다. (총 ${session.matchHistory.length}경기)`
+      return
+    }
+    saveError.value = result.message
+  } catch (error) {
+    saveError.value = mapMatchResultApiErrorMessage(error)
+  } finally {
+    isSaving.value = false
+  }
 }
 </script>
 
@@ -77,7 +168,17 @@ function onSaveMatch() {
               :key="`red-${i - 1}`"
               class="player-row"
             >
-              <div class="champion-thumb" aria-hidden="true" />
+              <div
+                class="champion-thumb"
+                :aria-hidden="!getPickedChampion('red', i - 1)"
+                :aria-label="getPickedChampion('red', i - 1)?.name"
+              >
+                <img
+                  v-if="getPickedChampion('red', i - 1)"
+                  :src="getPickedChampion('red', i - 1)!.imageUrl"
+                  :alt="getPickedChampion('red', i - 1)!.name"
+                />
+              </div>
               <div class="player-info">
                 <span class="player-name">
                   {{
@@ -145,7 +246,17 @@ function onSaveMatch() {
               :key="`blue-${i - 1}`"
               class="player-row"
             >
-              <div class="champion-thumb" aria-hidden="true" />
+              <div
+                class="champion-thumb"
+                :aria-hidden="!getPickedChampion('blue', i - 1)"
+                :aria-label="getPickedChampion('blue', i - 1)?.name"
+              >
+                <img
+                  v-if="getPickedChampion('blue', i - 1)"
+                  :src="getPickedChampion('blue', i - 1)!.imageUrl"
+                  :alt="getPickedChampion('blue', i - 1)!.name"
+                />
+              </div>
               <div class="player-info">
                 <span class="player-name">
                   {{
@@ -197,8 +308,13 @@ function onSaveMatch() {
     </div>
 
     <div class="result-actions">
-      <button type="button" class="btn-save" @click="onSaveMatch">
-        경기 결과 저장
+      <button
+        type="button"
+        class="btn-save"
+        :disabled="isSaving"
+        @click="onSaveMatch"
+      >
+        {{ isSaving ? '저장 중…' : '경기 결과 저장' }}
       </button>
       <p v-if="saveMessage" class="save-feedback save-success" role="status">
         {{ saveMessage }}
@@ -389,9 +505,9 @@ function onSaveMatch() {
 
 .result-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
   margin-bottom: 1rem;
 }
 
@@ -407,12 +523,18 @@ function onSaveMatch() {
   transition: filter 0.2s;
 }
 
-.btn-save:hover {
+.btn-save:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+.btn-save:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 .save-feedback {
   margin: 0;
+  width: 100%;
   font-size: 0.85rem;
 }
 

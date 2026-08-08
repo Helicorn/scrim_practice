@@ -3,10 +3,10 @@ package com.civilwar.domain.service;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.civilwar.api.dto.CheckRiotNeedsResponse;
-import com.civilwar.api.dto.PlayerInputDto;
-import com.civilwar.api.dto.PlayerRiotNeedDto;
-import com.civilwar.api.dto.SavedSummonerDto;
+import com.civilwar.api.dto.request.PlayerInputDto;
+import com.civilwar.api.dto.response.CheckRiotNeedsResponse;
+import com.civilwar.api.dto.response.PlayerRiotNeedDto;
+import com.civilwar.api.dto.response.SavedSummonerDto;
 import com.civilwar.domain.entity.SummonerCustomStatEntity;
 import com.civilwar.domain.entity.SummonerEntity;
 import com.civilwar.domain.entity.SummonerRankStatEntity;
