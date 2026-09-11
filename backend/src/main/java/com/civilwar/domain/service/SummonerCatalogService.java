@@ -9,7 +9,6 @@ import com.civilwar.api.dto.response.PlayerRiotNeedDto;
 import com.civilwar.api.dto.response.SavedSummonerDto;
 import com.civilwar.domain.entity.SummonerCustomStatEntity;
 import com.civilwar.domain.entity.SummonerEntity;
-import com.civilwar.domain.entity.SummonerRankStatEntity;
 import com.civilwar.domain.repository.SummonerCustomStatRepository;
 import com.civilwar.domain.repository.SummonerRepository;
 
@@ -92,9 +91,7 @@ public class SummonerCatalogService {
 	}
 
 	private SavedSummonerDto toDto(SummonerEntity summoner) {
-		SummonerRankStatEntity rankStat = displayStatsService
-				.findDisplayRankStat(summoner)
-				.orElse(null);
+		var displayStats = displayStatsService.toDisplayStats(summoner);
 		int totalGames = resolveTotalGames(summoner);
 
 		return new SavedSummonerDto(
@@ -103,12 +100,11 @@ public class SummonerCatalogService {
 				summoner.getTagLine(),
 				summoner.getPuuid(),
 				totalGames,
-				rankStat != null ? rankStat.getTier() : null,
-				rankStat != null ? rankStat.getRankName() : null,
-				rankStat != null ? rankStat.getLeaguePoints() : null,
-				rankStat != null && rankStat.getQueueType() != null
-						? rankStat.getQueueType().name()
-						: null);
+				displayStats.tier(),
+				displayStats.rankName(),
+				displayStats.leaguePoints(),
+				displayStats.queueType(),
+				displayStats);
 	}
 
 	private static boolean isBlank(String value) {

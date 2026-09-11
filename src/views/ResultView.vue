@@ -117,13 +117,18 @@ async function onSaveMatch() {
 
   isSaving.value = true
   try {
-    await saveSessionMatchResult(session.sessionId, {
+    const apiResult = await saveSessionMatchResult(session.sessionId, {
       matchNo: session.currentGame,
       winTeamColor: winner === 'red' ? 'RED' : 'BLUE',
       players: [...red.players, ...blue.players],
     })
 
-    const result = session.saveMatchToHistory()
+    const result = session.saveMatchToHistory({
+      redSeriesWins: apiResult.redSeriesWins,
+      blueSeriesWins: apiResult.blueSeriesWins,
+      currentMatchNo: apiResult.currentMatchNo,
+      seriesFinished: apiResult.seriesFinished,
+    })
     if (result.ok) {
       if (result.shouldGoToDraft) {
         saveMessage.value = `경기 결과를 저장했습니다. 다음 경기 밴픽으로 이동합니다. (${session.formatSessionSummary()})`
@@ -150,84 +155,6 @@ async function onSaveMatch() {
     </p>
 
     <div class="result-board">
-      <div class="team-panel team-red">
-        <label class="win-check">
-          <input
-            type="checkbox"
-            :checked="isWinner('red')"
-            @change="onWinnerChange('red', $event)"
-          />
-          <span>승리</span>
-        </label>
-
-        <div class="team-box">
-          <h2 class="team-title">RED</h2>
-          <ol class="player-rows">
-            <li
-              v-for="i in TEAM_SIZE"
-              :key="`red-${i - 1}`"
-              class="player-row"
-            >
-              <div
-                class="champion-thumb"
-                :aria-hidden="!getPickedChampion('red', i - 1)"
-                :aria-label="getPickedChampion('red', i - 1)?.name"
-              >
-                <img
-                  v-if="getPickedChampion('red', i - 1)"
-                  :src="getPickedChampion('red', i - 1)!.imageUrl"
-                  :alt="getPickedChampion('red', i - 1)!.name"
-                />
-              </div>
-              <div class="player-info">
-                <span class="player-name">
-                  {{
-                    session.isFilledPlayer(getSlot('red', i - 1))
-                      ? session.formatPlayerLabel(getSlot('red', i - 1))
-                      : '—'
-                  }}
-                </span>
-                <div class="kda-row">
-                  <label class="kda-field">
-                    <span class="kda-label">K</span>
-                    <input
-                      v-model="session.getKda('red', i - 1).kills"
-                      type="text"
-                      inputmode="numeric"
-                      class="input-field kda-input"
-                      placeholder="0"
-                      aria-label="킬"
-                    />
-                  </label>
-                  <label class="kda-field">
-                    <span class="kda-label">D</span>
-                    <input
-                      v-model="session.getKda('red', i - 1).deaths"
-                      type="text"
-                      inputmode="numeric"
-                      class="input-field kda-input"
-                      placeholder="0"
-                      aria-label="데스"
-                    />
-                  </label>
-                  <label class="kda-field">
-                    <span class="kda-label">A</span>
-                    <input
-                      v-model="session.getKda('red', i - 1).assists"
-                      type="text"
-                      inputmode="numeric"
-                      class="input-field kda-input"
-                      placeholder="0"
-                      aria-label="어시스트"
-                    />
-                  </label>
-                </div>
-              </div>
-            </li>
-          </ol>
-        </div>
-      </div>
-
       <div class="team-panel team-blue">
         <label class="win-check">
           <input
@@ -292,6 +219,84 @@ async function onSaveMatch() {
                     <span class="kda-label">A</span>
                     <input
                       v-model="session.getKda('blue', i - 1).assists"
+                      type="text"
+                      inputmode="numeric"
+                      class="input-field kda-input"
+                      placeholder="0"
+                      aria-label="어시스트"
+                    />
+                  </label>
+                </div>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="team-panel team-red">
+        <label class="win-check">
+          <input
+            type="checkbox"
+            :checked="isWinner('red')"
+            @change="onWinnerChange('red', $event)"
+          />
+          <span>승리</span>
+        </label>
+
+        <div class="team-box">
+          <h2 class="team-title">RED</h2>
+          <ol class="player-rows">
+            <li
+              v-for="i in TEAM_SIZE"
+              :key="`red-${i - 1}`"
+              class="player-row"
+            >
+              <div
+                class="champion-thumb"
+                :aria-hidden="!getPickedChampion('red', i - 1)"
+                :aria-label="getPickedChampion('red', i - 1)?.name"
+              >
+                <img
+                  v-if="getPickedChampion('red', i - 1)"
+                  :src="getPickedChampion('red', i - 1)!.imageUrl"
+                  :alt="getPickedChampion('red', i - 1)!.name"
+                />
+              </div>
+              <div class="player-info">
+                <span class="player-name">
+                  {{
+                    session.isFilledPlayer(getSlot('red', i - 1))
+                      ? session.formatPlayerLabel(getSlot('red', i - 1))
+                      : '—'
+                  }}
+                </span>
+                <div class="kda-row">
+                  <label class="kda-field">
+                    <span class="kda-label">K</span>
+                    <input
+                      v-model="session.getKda('red', i - 1).kills"
+                      type="text"
+                      inputmode="numeric"
+                      class="input-field kda-input"
+                      placeholder="0"
+                      aria-label="킬"
+                    />
+                  </label>
+                  <label class="kda-field">
+                    <span class="kda-label">D</span>
+                    <input
+                      v-model="session.getKda('red', i - 1).deaths"
+                      type="text"
+                      inputmode="numeric"
+                      class="input-field kda-input"
+                      placeholder="0"
+                      aria-label="데스"
+                    />
+                  </label>
+                  <label class="kda-field">
+                    <span class="kda-label">A</span>
+                    <input
+                      v-model="session.getKda('red', i - 1).assists"
                       type="text"
                       inputmode="numeric"
                       class="input-field kda-input"

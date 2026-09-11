@@ -7,5 +7,7 @@ public record SaveMatchResultResponse(
 		int savedPlayers,
 		int redSeriesWins,
 		int blueSeriesWins,
-		boolean seriesFinished) {
+		boolean seriesFinished,
+		int currentMatchNo,
+		String status) {
 }

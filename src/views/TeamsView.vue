@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
+import {
+  mapTeamsApiErrorMessage,
+  saveSessionTeams,
+  type TeamAssignmentInput,
+  type TeamPositionName,
+} from '@/services/sessionApi'
 import { useSessionStore } from '@/stores/session'
 import type { Player } from '@/types/session'
 
@@ -16,12 +22,22 @@ interface DragPayload {
 }
 
 const session = useSessionStore()
+const router = useRouter()
 const selectedPlayer = ref<Player | null>(null)
 const dragOverTarget = ref<string | null>(null)
 const draggingKey = ref<string | null>(null)
+const saveError = ref('')
+const isSaving = ref(false)
 
 const TEAM_SIZE = 5
 const POSITION_LABELS = ['탑', '정글', '미드', '원딜', '서포터'] as const
+const POSITION_NAMES: TeamPositionName[] = [
+  'TOP',
+  'JUNGLE',
+  'MID',
+  'ADC',
+  'SUPPORT',
+]
 
 session.ensurePlayers()
 session.ensureTeams()
@@ -182,6 +198,58 @@ function onDropToPool(event: DragEvent) {
   session.clearSlot(payload.source.team, payload.source.slotIndex)
   selectedPlayer.value = null
 }
+
+function buildTeamAssignments(
+  team: 'red' | 'blue',
+): { ok: true; players: TeamAssignmentInput[] } | { ok: false; message: string } {
+  const players: TeamAssignmentInput[] = []
+  for (let i = 0; i < TEAM_SIZE; i += 1) {
+    const slot = getSlot(team, i)
+    if (!session.isFilledPlayer(slot) || slot?.summonerId == null) {
+      return {
+        ok: false,
+        message: `${team === 'red' ? 'RED' : 'BLUE'} ${POSITION_LABELS[i]} 슬롯의 소환사 DB ID가 없습니다. 소환사 입력에서 다시 저장해 주세요.`,
+      }
+    }
+    players.push({
+      summonerId: slot.summonerId,
+      teamColor: team === 'red' ? 'RED' : 'BLUE',
+      positionName: POSITION_NAMES[i],
+    })
+  }
+  return { ok: true, players }
+}
+
+async function onNext() {
+  saveError.value = ''
+  if (!isTeamsComplete.value) return
+
+  if (!session.sessionId || !session.committed) {
+    saveError.value = '소환사 입력에서 로스터를 먼저 저장해 주세요.'
+    return
+  }
+
+  const blue = buildTeamAssignments('blue')
+  if (!blue.ok) {
+    saveError.value = blue.message
+    return
+  }
+  const red = buildTeamAssignments('red')
+  if (!red.ok) {
+    saveError.value = red.message
+    return
+  }
+
+  isSaving.value = true
+  try {
+    await saveSessionTeams(session.sessionId, [...blue.players, ...red.players])
+    await router.push('/draft')
+  } catch (error) {
+    saveError.value = mapTeamsApiErrorMessage(error)
+  } finally {
+    isSaving.value = false
+  }
+}
 </script>
 
 <template>
@@ -189,85 +257,11 @@ function onDropToPool(event: DragEvent) {
     <h1>팀 배치</h1>
     <p class="text-hint">
       가운데 소환사를 <strong>클릭</strong>한 뒤 칸을 누르거나,
-      <strong>드래그</strong>해서 좌(레드)·우(블루) 칸에 놓으세요.
+      <strong>드래그</strong>해서 좌(블루)·우(레드) 칸에 놓으세요.
       배치된 칸을 다시 누르면 비우고, 가운데로 드래그해도 풀로 돌아갑니다.
     </p>
 
     <div class="teams-board">
-      <div class="team-column team-red">
-        <h2 class="team-title">레드</h2>
-        <ol class="team-slots">
-          <li
-            v-for="slotIndex in TEAM_SIZE"
-            :key="`red-${slotIndex - 1}`"
-            class="team-slot"
-            :class="{
-              filled: session.isFilledPlayer(getSlot('red', slotIndex - 1)),
-              'drop-target':
-                dragOverTarget === slotTargetKey('red', slotIndex - 1),
-              dragging:
-                draggingKey !== null &&
-                session.isFilledPlayer(getSlot('red', slotIndex - 1)) &&
-                session.playerKey(getSlot('red', slotIndex - 1)!) ===
-                  draggingKey,
-            }"
-            :draggable="session.isFilledPlayer(getSlot('red', slotIndex - 1))"
-            @click="onSlotClick('red', slotIndex - 1)"
-            @dragstart="
-              onDragStart($event, getSlot('red', slotIndex - 1)!, {
-                kind: 'slot',
-                team: 'red',
-                slotIndex: slotIndex - 1,
-              })
-            "
-            @dragend="onDragEnd"
-            @dragover="onDragOver($event, slotTargetKey('red', slotIndex - 1))"
-            @dragleave="onDragLeave(slotTargetKey('red', slotIndex - 1))"
-            @drop="onDropToSlot($event, 'red', slotIndex - 1)"
-          >
-            <span class="position-label">{{ POSITION_LABELS[slotIndex - 1] }}</span>
-            <span
-              v-if="session.isFilledPlayer(getSlot('red', slotIndex - 1))"
-              class="slot-label"
-            >
-              {{ session.formatPlayerLabel(getSlot('red', slotIndex - 1)) }}
-            </span>
-            <span v-else class="slot-placeholder">빈 칸</span>
-          </li>
-        </ol>
-      </div>
-
-      <div
-        class="pool-column"
-        :class="{ 'drop-target': dragOverTarget === 'pool' }"
-        @dragover="onDragOver($event, 'pool')"
-        @dragleave="onDragLeave('pool')"
-        @drop="onDropToPool"
-      >
-        <p v-if="unassignedPlayers.length === 0" class="pool-empty text-label">
-          배치할 소환사가 없습니다.<br />
-          소환사 입력에서 이름을 먼저 등록하세요.
-        </p>
-        <ul v-else class="pool-list">
-          <li v-for="(player, index) in unassignedPlayers" :key="index">
-            <button
-              type="button"
-              class="pool-player"
-              :class="{
-                selected: isSelected(player),
-                dragging: draggingKey === session.playerKey(player),
-              }"
-              draggable="true"
-              @click="selectPlayer(player)"
-              @dragstart="onDragStart($event, player, { kind: 'pool' })"
-              @dragend="onDragEnd"
-            >
-              {{ session.formatPlayerLabel(player) }}
-            </button>
-          </li>
-        </ul>
-      </div>
-
       <div class="team-column team-blue">
         <h2 class="team-title">블루</h2>
         <ol class="team-slots">
@@ -310,18 +304,95 @@ function onDropToPool(event: DragEvent) {
           </li>
         </ol>
       </div>
+
+      <div
+        class="pool-column"
+        :class="{ 'drop-target': dragOverTarget === 'pool' }"
+        @dragover="onDragOver($event, 'pool')"
+        @dragleave="onDragLeave('pool')"
+        @drop="onDropToPool"
+      >
+        <p v-if="unassignedPlayers.length === 0" class="pool-empty text-label">
+          배치할 소환사가 없습니다.<br />
+          소환사 입력에서 이름을 먼저 등록하세요.
+        </p>
+        <ul v-else class="pool-list">
+          <li v-for="(player, index) in unassignedPlayers" :key="index">
+            <button
+              type="button"
+              class="pool-player"
+              :class="{
+                selected: isSelected(player),
+                dragging: draggingKey === session.playerKey(player),
+              }"
+              draggable="true"
+              @click="selectPlayer(player)"
+              @dragstart="onDragStart($event, player, { kind: 'pool' })"
+              @dragend="onDragEnd"
+            >
+              {{ session.formatPlayerLabel(player) }}
+            </button>
+          </li>
+        </ul>
+      </div>
+
+      <div class="team-column team-red">
+        <h2 class="team-title">레드</h2>
+        <ol class="team-slots">
+          <li
+            v-for="slotIndex in TEAM_SIZE"
+            :key="`red-${slotIndex - 1}`"
+            class="team-slot"
+            :class="{
+              filled: session.isFilledPlayer(getSlot('red', slotIndex - 1)),
+              'drop-target':
+                dragOverTarget === slotTargetKey('red', slotIndex - 1),
+              dragging:
+                draggingKey !== null &&
+                session.isFilledPlayer(getSlot('red', slotIndex - 1)) &&
+                session.playerKey(getSlot('red', slotIndex - 1)!) ===
+                  draggingKey,
+            }"
+            :draggable="session.isFilledPlayer(getSlot('red', slotIndex - 1))"
+            @click="onSlotClick('red', slotIndex - 1)"
+            @dragstart="
+              onDragStart($event, getSlot('red', slotIndex - 1)!, {
+                kind: 'slot',
+                team: 'red',
+                slotIndex: slotIndex - 1,
+              })
+            "
+            @dragend="onDragEnd"
+            @dragover="onDragOver($event, slotTargetKey('red', slotIndex - 1))"
+            @dragleave="onDragLeave(slotTargetKey('red', slotIndex - 1))"
+            @drop="onDropToSlot($event, 'red', slotIndex - 1)"
+          >
+            <span class="position-label">{{ POSITION_LABELS[slotIndex - 1] }}</span>
+            <span
+              v-if="session.isFilledPlayer(getSlot('red', slotIndex - 1))"
+              class="slot-label"
+            >
+              {{ session.formatPlayerLabel(getSlot('red', slotIndex - 1)) }}
+            </span>
+            <span v-else class="slot-placeholder">빈 칸</span>
+          </li>
+        </ol>
+      </div>
     </div>
 
     <div class="teams-actions">
       <RouterLink to="/players" class="teams-back">← 소환사 입력</RouterLink>
-      <RouterLink
+      <button
         v-if="isTeamsComplete"
-        to="/draft"
+        type="button"
         class="btn-next"
+        :disabled="isSaving"
+        @click="onNext"
       >
-        다음 →
-      </RouterLink>
+        {{ isSaving ? '저장 중…' : '다음 →' }}
+      </button>
     </div>
+    <p v-if="saveError" class="save-error" role="alert">{{ saveError }}</p>
   </section>
 </template>
 
@@ -541,7 +612,18 @@ function onDropToPool(event: DragEvent) {
   transition: filter 0.2s;
 }
 
-.btn-next:hover {
+.btn-next:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+.btn-next:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.save-error {
+  margin: 0.75rem 0 0;
+  color: #c62828;
+  font-size: 0.9rem;
 }
 </style>

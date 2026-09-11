@@ -61,6 +61,8 @@ public class SessionPlayersService {
 		CustomGameEntity game = customGameRepository.findBySessionCode(code)
 				.orElseGet(() -> createGame(code, seriesType, peerlessYn));
 
+		CustomGameStatusRules.requireNotTerminal(game, "로스터를 저장");
+
 		game.setSeriesType(seriesType);
 		game.setPeerlessYn(peerlessYn);
 		game.setStatus(CustomGameStatus.PLAYERS);

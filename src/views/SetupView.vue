@@ -2,6 +2,13 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import {
+  cancelSession,
+  getSessionSnapshot,
+  mapCancelSessionApiErrorMessage,
+  mapSessionSnapshotApiErrorMessage,
+  SessionApiError,
+} from '@/services/sessionApi'
 import { useSessionStore } from '@/stores/session'
 import type { SeriesType } from '@/types/session'
 import { SERIES_CONFIG } from '@/types/session'
@@ -22,33 +29,107 @@ const hasActiveSession = computed(() => session.hasActiveSession)
 
 const activeSummary = computed(() => session.formatSessionSummary())
 const showDismissModal = ref(false)
+const resumeCode = ref('')
+const actionError = ref('')
+const isContinuing = ref(false)
+const isDismissing = ref(false)
+const isStarting = ref(false)
 
 function openDismissModal() {
+  actionError.value = ''
   showDismissModal.value = true
 }
 
 function closeDismissModal() {
+  if (isDismissing.value) return
   showDismissModal.value = false
 }
 
-function confirmDismissSession() {
-  session.clearActiveSession()
-  selectedSeries.value = 'single'
-  peerless.value = false
-  closeDismissModal()
-}
-
-function onStart() {
-  if (session.hasActiveSession) {
-    session.clearActiveSession()
+async function cancelOnServerIfPossible(sessionCode: string): Promise<void> {
+  try {
+    await cancelSession(sessionCode)
+  } catch (error) {
+    if (error instanceof SessionApiError && error.status === 404) {
+      return
+    }
+    throw error
   }
-  session.beginSetup(selectedSeries.value, peerless.value)
-  router.push('/players')
 }
 
-function onContinue() {
-  if (!session.hasActiveSession) return
-  router.push(`/${session.continueRouteName()}`)
+async function confirmDismissSession() {
+  actionError.value = ''
+  const code = session.sessionId
+  isDismissing.value = true
+  try {
+    if (code) {
+      await cancelOnServerIfPossible(code)
+    }
+    session.clearActiveSession()
+    selectedSeries.value = 'single'
+    peerless.value = false
+    resumeCode.value = ''
+    closeDismissModal()
+  } catch (error) {
+    actionError.value = mapCancelSessionApiErrorMessage(error)
+  } finally {
+    isDismissing.value = false
+  }
+}
+
+async function onStart() {
+  actionError.value = ''
+  isStarting.value = true
+  try {
+    if (session.hasActiveSession && session.sessionId) {
+      await cancelOnServerIfPossible(session.sessionId)
+      session.clearActiveSession()
+    }
+    session.beginSetup(selectedSeries.value, peerless.value)
+    await router.push('/players')
+  } catch (error) {
+    actionError.value = mapCancelSessionApiErrorMessage(error)
+  } finally {
+    isStarting.value = false
+  }
+}
+
+async function resumeByCode(sessionCode: string) {
+  const code = sessionCode.trim()
+  if (!code) {
+    actionError.value = '세션 코드를 입력해 주세요.'
+    return
+  }
+
+  actionError.value = ''
+  isContinuing.value = true
+  try {
+    const snapshot = await getSessionSnapshot(code)
+    const route = session.hydrateFromSnapshot(snapshot)
+    selectedSeries.value = snapshot.seriesType
+    peerless.value = snapshot.peerless
+    resumeCode.value = ''
+    await router.push(`/${route}`)
+  } catch (error) {
+    if (error instanceof SessionApiError && error.status === 404) {
+      if (session.sessionId === code) {
+        session.clearActiveSession()
+        selectedSeries.value = 'single'
+        peerless.value = false
+      }
+    }
+    actionError.value = mapSessionSnapshotApiErrorMessage(error)
+  } finally {
+    isContinuing.value = false
+  }
+}
+
+async function onContinue() {
+  if (!session.sessionId) return
+  await resumeByCode(session.sessionId)
+}
+
+async function onResumeByCode() {
+  await resumeByCode(resumeCode.value)
 }
 </script>
 
@@ -62,22 +143,58 @@ function onContinue() {
         type="button"
         class="active-dismiss"
         aria-label="진행 중인 내전 삭제"
+        :disabled="isDismissing || isContinuing || isStarting"
         @click="openDismissModal"
       />
       <p class="active-label text-label">진행 중인 내전</p>
       <p class="active-summary">{{ activeSummary }}</p>
-      <button type="button" class="btn-secondary" @click="onContinue">
-        이어서 진행
+      <p v-if="session.sessionId" class="active-code text-label">
+        세션 코드 · {{ session.sessionId }}
+      </p>
+      <button
+        type="button"
+        class="btn-secondary"
+        :disabled="isContinuing || isDismissing || isStarting"
+        @click="onContinue"
+      >
+        {{ isContinuing ? '불러오는 중…' : '이어서 진행' }}
       </button>
     </div>
+
+    <div v-else class="resume-panel">
+      <p class="active-label text-label">세션 코드로 이어하기</p>
+      <p class="text-hint resume-hint">
+        다른 브라우저·기기에서 진행 중이던 내전을 DB에서 불러옵니다.
+      </p>
+      <input
+        v-model="resumeCode"
+        class="resume-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="세션 코드 (UUID)"
+        :disabled="isContinuing || isStarting"
+        @keydown.enter.prevent="onResumeByCode"
+      />
+      <button
+        type="button"
+        class="btn-secondary"
+        :disabled="isContinuing || isStarting || !resumeCode.trim()"
+        @click="onResumeByCode"
+      >
+        {{ isContinuing ? '불러오는 중…' : '코드로 이어하기' }}
+      </button>
+    </div>
+
+    <p v-if="actionError" class="action-error" role="alert">{{ actionError }}</p>
 
     <ConfirmModal
       :open="showDismissModal"
       title="진행 중인 내전 삭제"
       :messages="[
-        '저장된 진행 정보(소환사 로스터·팀·시리즈 점수)가 모두 삭제됩니다.',
-        '이미 저장한 경기 결과 기록은 유지됩니다.',
-        '삭제 후에는 새 내전을 시작하거나 다시 설정할 수 있습니다.',
+        '서버의 진행 중 세션이 취소되고, 이 브라우저의 진행 정보도 삭제됩니다.',
+        '이미 저장한 경기 결과·전적 집계는 유지됩니다.',
+        '삭제 후에는 새 내전을 시작하거나 세션 코드로 다시 이어갈 수 없습니다.',
       ]"
       confirm-label="삭제"
       cancel-label="취소"
@@ -115,13 +232,24 @@ function onContinue() {
     </label>
 
     <div class="setup-actions">
-      <button type="button" class="btn-primary" @click="onStart">
-        {{ hasActiveSession ? '새 내전 시작' : '내전 시작' }}
+      <button
+        type="button"
+        class="btn-primary"
+        :disabled="isStarting || isContinuing || isDismissing"
+        @click="onStart"
+      >
+        {{
+          isStarting
+            ? '시작하는 중…'
+            : hasActiveSession
+              ? '새 내전 시작'
+              : '내전 시작'
+        }}
       </button>
     </div>
 
     <p v-if="hasActiveSession" class="restart-note text-label">
-      「새 내전 시작」을 누르면 진행 중이던 내전 정보가 초기화됩니다.
+      「새 내전 시작」을 누르면 진행 중이던 내전이 서버에서 취소됩니다.
     </p>
   </section>
 </template>
@@ -133,13 +261,20 @@ function onContinue() {
   margin: 0 auto;
 }
 
-.active-session {
+.active-session,
+.resume-panel {
   position: relative;
   margin-bottom: 1.25rem;
   padding: 0.75rem 2rem 0.85rem 0.85rem;
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-input);
   background: rgba(66, 184, 131, 0.08);
+}
+
+.resume-panel {
+  padding-right: 0.85rem;
+  border-color: var(--color-input-border);
+  background: var(--color-input-bg);
 }
 
 .active-dismiss {
@@ -157,6 +292,11 @@ function onContinue() {
   line-height: 0;
   cursor: pointer;
   transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.active-dismiss:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .active-dismiss::before,
@@ -179,7 +319,7 @@ function onContinue() {
   transform: translate(-50%, -50%) rotate(-45deg);
 }
 
-.active-dismiss:hover {
+.active-dismiss:hover:not(:disabled) {
   border-color: #e84057;
   color: #e84057;
   background: rgba(232, 64, 87, 0.15);
@@ -190,8 +330,38 @@ function onContinue() {
 }
 
 .active-summary {
-  margin: 0 0 0.65rem;
+  margin: 0 0 0.35rem;
   font-size: 1rem;
+}
+
+.active-code {
+  margin: 0 0 0.65rem;
+  word-break: break-all;
+}
+
+.resume-hint {
+  margin: 0 0 0.65rem;
+}
+
+.resume-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-input);
+  background: var(--color-input-bg);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.action-error {
+  margin: 0 0 1rem;
+  color: #c62828;
+  font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 .setup-fieldset {
@@ -284,8 +454,14 @@ function onContinue() {
   color: #fff;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .btn-secondary {
@@ -294,7 +470,7 @@ function onContinue() {
   color: inherit;
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
   border-color: var(--color-accent);
 }
 

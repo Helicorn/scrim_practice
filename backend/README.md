@@ -51,8 +51,36 @@ copy backend\src\main\resources\application-oracle-local.yml.example backend\src
 |------|------|
 | `GET /api/health` | 서버 상태 |
 | `/riot-api/**` | Riot API 프록시 (asia, `X-Riot-Token`) |
+| `GET /api/sessions/{sessionCode}` | 진행 중 세션 스냅샷 (이어서 하기) |
+| `POST /api/sessions/{sessionCode}/cancel` | 진행 중 세션 취소 (`CANCELLED`) |
 | `POST /api/sessions/{sessionCode}/players` | 10인 소환사·세션 저장 |
+| `PUT /api/sessions/{sessionCode}/teams` | 팀·포지션 배치 저장 (`TEAM_SETUP`) |
 | `POST /api/sessions/{sessionCode}/rank-stats` | League-V4 랭크 갱신 (`X-Riot-Token`) |
+| `POST /api/sessions/{sessionCode}/pick-ban` | 밴픽 마감 → `RESULT_INPUT` |
+| `POST /api/sessions/{sessionCode}/match-result` | 경기 결과 → `DRAFT` 또는 `FINISHED` |
+
+### 세션 STATUS 전이
+
+| 이벤트 | STATUS |
+|--------|--------|
+| 로스터 등록 | `PLAYERS` |
+| 팀 배치 저장 | `TEAM_SETUP` |
+| 밴픽 마감 | `RESULT_INPUT` |
+| 결과 저장 · 시리즈 계속 | `DRAFT` (`CURRENT_MATCH_NO` = 다음 판) |
+| 결과 저장 · 시리즈 종료 | `FINISHED` |
+| 사용자 삭제 | `CANCELLED` |
+
+### 이어서 하기 — 수동 검증
+
+| # | 시나리오 | 확인 |
+|---|----------|------|
+| 1 | 로스터만 `POST .../players` → `GET` 스냅샷 | `status=PLAYERS`, `suggestedRoute=teams` |
+| 2 | `PUT .../teams` 후 스냅샷 | `TEAM_SETUP`, `players[].teamColor/positionName` 채움 |
+| 3 | `POST .../pick-ban` 후 스냅샷 | `RESULT_INPUT`, `currentMatchPicks` 10픽 |
+| 4 | `POST .../match-result` (시리즈 계속) | `DRAFT`, `currentMatchNo` +1, 스코어 반영 |
+| 5 | `POST .../cancel` 후 `GET` | 404 · 전적 테이블은 유지 |
+
+상세 UI 시나리오: [`../기획.md`](../기획.md) §8 세션 이어서 하기.
 
 ## JPA
 

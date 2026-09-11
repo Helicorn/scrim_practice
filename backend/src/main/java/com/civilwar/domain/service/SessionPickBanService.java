@@ -66,6 +66,8 @@ public class SessionPickBanService {
 						HttpStatus.NOT_FOUND,
 						"세션을 찾을 수 없습니다. 소환사 입력에서 먼저 저장해 주세요."));
 
+		CustomGameStatusRules.requireTeamsReadyForPickBan(game);
+
 		CustomMatchEntity match = customMatchRepository
 				.findByGame_GameIdAndMatchNo(game.getGameId(), request.matchNo())
 				.orElseGet(() -> createMatch(game, request.matchNo()));

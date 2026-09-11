@@ -14,6 +14,10 @@ import {
   formatRiotKeyRequiredMessage,
   formatSavedSummonerLabel,
   formatSavedSummonerRank,
+  formatStatsSourceLabel,
+  formatWinRecord,
+  formatMainPositionLabel,
+  formatMostChampionNames,
   savedSummonerKey,
   type SavedSummoner,
 } from '@/services/summonerApi'
@@ -425,10 +429,29 @@ async function onNext() {
             @dragstart="onDragStart($event, s)"
           >
             <span class="saved-item-name">{{ formatSavedSummonerLabel(s) }}</span>
+            <span
+              v-if="formatStatsSourceLabel(s)"
+              class="saved-item-source"
+              :class="{
+                'saved-item-source--custom': s.displayStats?.source === 'CUSTOM',
+                'saved-item-source--rank': s.displayStats?.source === 'RANK',
+              }"
+            >
+              {{ formatStatsSourceLabel(s) }}
+            </span>
+            <span v-if="isSummonerUsed(s)" class="saved-item-badge">입력됨</span>
             <span v-if="formatSavedSummonerRank(s)" class="saved-item-rank text-label">
               {{ formatSavedSummonerRank(s) }}
             </span>
-            <span v-if="isSummonerUsed(s)" class="saved-item-badge">입력됨</span>
+            <span v-if="formatWinRecord(s)" class="saved-item-stats text-label">
+              {{ formatWinRecord(s) }}
+            </span>
+            <span v-if="formatMainPositionLabel(s)" class="saved-item-stats text-label">
+              {{ formatMainPositionLabel(s) }}
+            </span>
+            <span v-if="formatMostChampionNames(s)" class="saved-item-most text-label">
+              {{ formatMostChampionNames(s) }}
+            </span>
           </li>
         </ul>
       </aside>
@@ -709,13 +732,51 @@ async function onNext() {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.25rem 0.4rem;
+  gap: 0.2rem 0.4rem;
   padding: 0.45rem 0.5rem;
   border-radius: calc(var(--radius-input) - 2px);
   border: 1px solid var(--color-input-border);
   background: var(--color-bg, #fff);
   font-size: 0.85rem;
   line-height: 1.3;
+}
+
+.saved-item-name {
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.saved-item-source {
+  font-size: 0.68rem;
+  padding: 0.08rem 0.32rem;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+.saved-item-source--custom {
+  background: rgba(66, 184, 131, 0.16);
+  color: var(--color-accent);
+}
+
+.saved-item-source--rank {
+  background: rgba(100, 108, 255, 0.14);
+  color: #8b93ff;
+}
+
+.saved-item-rank,
+.saved-item-stats,
+.saved-item-most {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.saved-item-rank {
+  flex-basis: auto;
+}
+
+.saved-item-most {
+  opacity: 0.9;
 }
 
 .saved-item--draggable {
@@ -736,16 +797,6 @@ async function onNext() {
   opacity: 0.55;
   cursor: default;
   background: transparent;
-}
-
-.saved-item-name {
-  font-weight: 500;
-  word-break: break-all;
-}
-
-.saved-item-rank {
-  font-size: 0.75rem;
-  color: var(--color-text-faint);
 }
 
 .saved-item-badge {

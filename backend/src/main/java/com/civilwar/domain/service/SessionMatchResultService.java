@@ -77,6 +77,8 @@ public class SessionMatchResultService {
 						HttpStatus.NOT_FOUND,
 						"세션을 찾을 수 없습니다. 소환사 입력에서 먼저 저장해 주세요."));
 
+		CustomGameStatusRules.requireResultReady(game);
+
 		TeamColor winTeam = parseTeamColor(request.winTeamColor());
 
 		CustomMatchEntity match = customMatchRepository
@@ -128,12 +130,16 @@ public class SessionMatchResultService {
 		match.setEndedAt(LocalDateTime.now());
 
 		updateSeriesWins(game, wasFinished, previousWinTeam, winTeam);
-		game.setCurrentMatchNo(request.matchNo());
 
 		boolean seriesFinished = isSeriesFinished(game);
-		game.setStatus(seriesFinished ? CustomGameStatus.FINISHED : CustomGameStatus.DRAFT);
 		if (seriesFinished) {
+			game.setStatus(CustomGameStatus.FINISHED);
 			game.setEndedAt(LocalDateTime.now());
+			game.setCurrentMatchNo(request.matchNo());
+		} else {
+			game.setStatus(CustomGameStatus.DRAFT);
+			game.setEndedAt(null);
+			game.setCurrentMatchNo(request.matchNo() + 1);
 		}
 
 		customStatRecomputeService.recomputeForSummoners(summonerIds);
@@ -145,7 +151,9 @@ public class SessionMatchResultService {
 				savedPlayers,
 				nullToZero(game.getRedSeriesWins()),
 				nullToZero(game.getBlueSeriesWins()),
-				seriesFinished);
+				seriesFinished,
+				nullToZero(game.getCurrentMatchNo()),
+				game.getStatus().name());
 	}
 
 	private CustomMatchEntity createMatch(CustomGameEntity game, int matchNo) {

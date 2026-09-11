@@ -1,7 +1,14 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type {
+  SessionDraftPickSnapshot,
+  SessionPlayerSnapshot,
+  SessionSnapshot,
+  TeamPositionName,
+} from '@/services/sessionApi'
+import type {
   CivilWarMeta,
+  DraftChampionPick,
   DraftState,
   MatchResult,
   Player,
@@ -13,10 +20,19 @@ import { SERIES_CONFIG } from '@/types/session'
 
 const PLAYER_COUNT = 10
 const TEAM_SIZE = 5
+const POSITION_NAMES: TeamPositionName[] = [
+  'TOP',
+  'JUNGLE',
+  'MID',
+  'ADC',
+  'SUPPORT',
+]
 const RIOT_API_KEY_STORAGE = 'civilwar_riot_api_key'
 const MATCH_HISTORY_STORAGE = 'civilwar_match_history'
 const SESSION_META_STORAGE = 'civilwar_session_meta'
 const PEERLESS_CHAMPIONS_STORAGE = 'civilwar_peerless_champions'
+
+export type ContinueRoute = 'teams' | 'draft' | 'result'
 
 interface PeerlessChampionStore {
   sessionId: string
@@ -111,6 +127,82 @@ function formatPlayerLabel(player: Player | undefined): string {
   const tag = player.tagLine.trim()
   if (!name) return ''
   return tag ? `${name}#${tag}` : name
+}
+
+function snapshotToPlayer(row: SessionPlayerSnapshot): Player {
+  return {
+    gameName: row.gameName,
+    tagLine: row.tagLine,
+    puuid: row.puuid ?? undefined,
+    summonerId: row.summonerId,
+  }
+}
+
+function positionSlotIndex(positionName: TeamPositionName | null): number | null {
+  if (!positionName) return null
+  const index = POSITION_NAMES.indexOf(positionName)
+  return index >= 0 ? index : null
+}
+
+function buildTeamSlots(
+  rows: SessionPlayerSnapshot[],
+  teamColor: 'RED' | 'BLUE',
+): Player[] {
+  const slots = Array.from({ length: TEAM_SIZE }, () => emptyPlayer())
+  for (const row of rows) {
+    if (row.teamColor !== teamColor) continue
+    const slot = positionSlotIndex(row.positionName)
+    if (slot == null) continue
+    slots[slot] = snapshotToPlayer(row)
+  }
+  return slots
+}
+
+function buildDraftFromPicks(
+  redTeam: Player[],
+  blueTeam: Player[],
+  picks: SessionDraftPickSnapshot[],
+): DraftState | null {
+  if (picks.length === 0) return null
+
+  const redPicks: Array<DraftChampionPick | null> = Array.from(
+    { length: TEAM_SIZE },
+    () => null,
+  )
+  const bluePicks: Array<DraftChampionPick | null> = Array.from(
+    { length: TEAM_SIZE },
+    () => null,
+  )
+  const usedChampionIds: string[] = []
+
+  for (const pick of picks) {
+    const champion: DraftChampionPick = {
+      id: pick.championKey,
+      name: pick.championNameKr ?? pick.championKey,
+      imageUrl: pick.imageUrl ?? '',
+    }
+    usedChampionIds.push(pick.championKey)
+
+    const teamList = pick.teamColor === 'RED' ? redTeam : blueTeam
+    const pickList = pick.teamColor === 'RED' ? redPicks : bluePicks
+    let slotIndex = -1
+    if (pick.summonerId != null) {
+      slotIndex = teamList.findIndex((p) => p.summonerId === pick.summonerId)
+    }
+    if (slotIndex < 0) {
+      slotIndex = pickList.findIndex((slot) => slot == null)
+    }
+    if (slotIndex >= 0 && slotIndex < TEAM_SIZE) {
+      pickList[slotIndex] = champion
+    }
+  }
+
+  return {
+    completed: true,
+    usedChampionIds,
+    redPicks,
+    bluePicks,
+  }
 }
 
 export const useSessionStore = defineStore('session', () => {
@@ -399,8 +491,47 @@ export const useSessionStore = defineStore('session', () => {
     return true
   }
 
-  function continueRouteName(): 'teams' | 'draft' {
-    return areTeamsComplete() ? 'draft' : 'teams'
+  function continueRouteName(): ContinueRoute {
+    if (!areTeamsComplete()) return 'teams'
+    if (draft.value?.completed) return 'result'
+    return 'draft'
+  }
+
+  /** DB 스냅샷으로 Pinia·localStorage 복구. 반환: 이동할 라우트 */
+  function hydrateFromSnapshot(snapshot: SessionSnapshot): ContinueRoute {
+    const roster = [...snapshot.players].sort((a, b) => {
+      const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER
+      const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER
+      return aOrder - bOrder
+    })
+
+    const nextPlayers = Array.from({ length: PLAYER_COUNT }, (_, i) =>
+      roster[i] ? snapshotToPlayer(roster[i]) : emptyPlayer(),
+    )
+    const nextBlue = buildTeamSlots(roster, 'BLUE')
+    const nextRed = buildTeamSlots(roster, 'RED')
+    const nextDraft =
+      snapshot.suggestedRoute === 'result'
+        ? buildDraftFromPicks(nextRed, nextBlue, snapshot.currentMatchPicks)
+        : null
+
+    sessionId.value = snapshot.sessionCode
+    seriesType.value = snapshot.seriesType
+    peerless.value = snapshot.peerless
+    currentGame.value = snapshot.currentMatchNo
+    redSeriesWins.value = snapshot.redSeriesWins
+    blueSeriesWins.value = snapshot.blueSeriesWins
+    committed.value = true
+    players.value = nextPlayers
+    blueTeam.value = nextBlue
+    redTeam.value = nextRed
+    draft.value = nextDraft
+    matchResult.value = null
+    peerlessUsedChampionIds.value = [...snapshot.peerlessChampionKeys]
+    persistPeerlessChampions()
+    persistSessionMeta()
+
+    return snapshot.suggestedRoute
   }
 
   /** 진행 중 내전 세션·입력 중 데이터 삭제 (저장된 경기 히스토리·API Key는 유지) */
@@ -431,7 +562,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!areTeamsComplete()) {
       return `${cfg.label}${peerlessLabel} · 로스터 확정 · 팀 배치 중`
     }
-    const score = `RED ${redSeriesWins.value} - ${blueSeriesWins.value} BLUE`
+    const score = `BLUE ${blueSeriesWins.value} - ${redSeriesWins.value} RED`
     const gameLabel =
       cfg.maxGames == null
         ? `${currentGame.value}판`
@@ -450,7 +581,12 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function saveMatchToHistory(): SaveMatchResult {
+  function saveMatchToHistory(serverProgress?: {
+    redSeriesWins: number
+    blueSeriesWins: number
+    currentMatchNo: number
+    seriesFinished: boolean
+  }): SaveMatchResult {
     ensureMatchResult()
     ensureTeams()
 
@@ -479,31 +615,44 @@ export const useSessionStore = defineStore('session', () => {
       blueKda: cloneKdaList(matchResult.value!.blueKda),
     }
 
-    if (winner === 'red') redSeriesWins.value += 1
-    else blueSeriesWins.value += 1
-
     matchHistory.value = [...matchHistory.value, record]
     persistMatchHistory()
-    persistSessionMeta()
+
+    if (serverProgress) {
+      redSeriesWins.value = serverProgress.redSeriesWins
+      blueSeriesWins.value = serverProgress.blueSeriesWins
+    } else if (winner === 'red') {
+      redSeriesWins.value += 1
+    } else {
+      blueSeriesWins.value += 1
+    }
 
     const cfg = SERIES_CONFIG[seriesType.value]
     const seriesDone =
-      cfg.winsRequired != null &&
-      (redSeriesWins.value >= cfg.winsRequired ||
-        blueSeriesWins.value >= cfg.winsRequired)
+      serverProgress?.seriesFinished ??
+      (cfg.winsRequired != null &&
+        (redSeriesWins.value >= cfg.winsRequired ||
+          blueSeriesWins.value >= cfg.winsRequired))
 
     let shouldGoToDraft = false
 
     const canContinue =
       !seriesDone &&
-      (cfg.maxGames == null || currentGame.value < cfg.maxGames)
+      (cfg.maxGames == null ||
+        (serverProgress
+          ? serverProgress.currentMatchNo <= cfg.maxGames
+          : currentGame.value < cfg.maxGames))
 
     if (canContinue) {
       if (peerless.value && draft.value?.usedChampionIds?.length) {
         recordPeerlessChampions(draft.value.usedChampionIds)
       }
 
-      currentGame.value += 1
+      if (serverProgress) {
+        currentGame.value = serverProgress.currentMatchNo
+      } else {
+        currentGame.value += 1
+      }
 
       if (peerless.value) {
         resetDraftAndResultState()
@@ -511,10 +660,9 @@ export const useSessionStore = defineStore('session', () => {
       } else {
         resetMatchFlowState()
       }
-
-      persistSessionMeta()
     }
 
+    persistSessionMeta()
     return { ok: true, shouldGoToDraft }
   }
 
@@ -539,6 +687,7 @@ export const useSessionStore = defineStore('session', () => {
     beginSetup,
     commitActiveSession,
     continueRouteName,
+    hydrateFromSnapshot,
     areRosterComplete,
     areTeamsComplete,
     clearActiveSession,

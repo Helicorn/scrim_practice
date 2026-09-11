@@ -77,6 +77,61 @@ export interface SaveMatchResultApiResult {
   redSeriesWins: number
   blueSeriesWins: number
   seriesFinished: boolean
+  currentMatchNo: number
+  status: string
+}
+
+export type TeamPositionName = 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT'
+
+export interface TeamAssignmentInput {
+  summonerId: number
+  teamColor: 'RED' | 'BLUE'
+  positionName: TeamPositionName
+}
+
+export interface SaveSessionTeamsResult {
+  sessionCode: string
+  gameId: number
+  savedPlayers: number
+  status: string
+}
+
+export interface SessionPlayerSnapshot {
+  summonerId: number
+  gameName: string
+  tagLine: string
+  puuid: string | null
+  teamColor: 'RED' | 'BLUE' | null
+  positionName: TeamPositionName | null
+  sortOrder: number | null
+}
+
+export interface SessionDraftPickSnapshot {
+  teamColor: 'RED' | 'BLUE'
+  summonerId: number | null
+  championKey: string
+  championNameKr: string | null
+  imageUrl: string | null
+}
+
+export interface SessionSnapshot {
+  sessionCode: string
+  gameId: number
+  seriesType: SeriesType
+  peerless: boolean
+  status: string
+  currentMatchNo: number
+  redSeriesWins: number
+  blueSeriesWins: number
+  suggestedRoute: 'teams' | 'draft' | 'result'
+  players: SessionPlayerSnapshot[]
+  peerlessChampionKeys: string[]
+  currentMatchPicks: SessionDraftPickSnapshot[]
+}
+
+export interface CancelSessionResult {
+  sessionCode: string
+  status: string
 }
 
 export class SessionApiError extends Error {
@@ -213,6 +268,59 @@ async function parseSessionApiResponse<T>(
   return payload as T
 }
 
+export async function saveSessionTeams(
+  sessionCode: string,
+  players: TeamAssignmentInput[],
+): Promise<SaveSessionTeamsResult> {
+  const response = await fetch(
+    buildUrl(`/api/sessions/${encodeURIComponent(sessionCode)}/teams`),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ players }),
+    },
+  )
+
+  return parseSessionApiResponse<SaveSessionTeamsResult>(
+    response,
+    '팀 배치 저장 실패',
+  )
+}
+
+export async function getSessionSnapshot(
+  sessionCode: string,
+): Promise<SessionSnapshot> {
+  const response = await fetch(
+    buildUrl(`/api/sessions/${encodeURIComponent(sessionCode)}`),
+    {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    },
+  )
+
+  return parseSessionApiResponse<SessionSnapshot>(
+    response,
+    '세션 조회 실패',
+  )
+}
+
+export async function cancelSession(
+  sessionCode: string,
+): Promise<CancelSessionResult> {
+  const response = await fetch(
+    buildUrl(`/api/sessions/${encodeURIComponent(sessionCode)}/cancel`),
+    {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    },
+  )
+
+  return parseSessionApiResponse<CancelSessionResult>(
+    response,
+    '세션 취소 실패',
+  )
+}
+
 export async function saveSessionPickBan(
   sessionCode: string,
   matchNo: number,
@@ -280,4 +388,34 @@ export function mapMatchResultApiErrorMessage(error: unknown): string {
     return '백엔드에 연결할 수 없습니다. npm run server 로 서버를 실행해 주세요.'
   }
   return '경기 결과 저장 중 알 수 없는 오류가 발생했습니다.'
+}
+
+export function mapTeamsApiErrorMessage(error: unknown): string {
+  if (error instanceof SessionApiError) {
+    return error.message
+  }
+  if (error instanceof TypeError) {
+    return '백엔드에 연결할 수 없습니다. npm run server 로 서버를 실행해 주세요.'
+  }
+  return '팀 배치 저장 중 알 수 없는 오류가 발생했습니다.'
+}
+
+export function mapSessionSnapshotApiErrorMessage(error: unknown): string {
+  if (error instanceof SessionApiError) {
+    return error.message
+  }
+  if (error instanceof TypeError) {
+    return '백엔드에 연결할 수 없습니다. npm run server 로 서버를 실행해 주세요.'
+  }
+  return '세션 조회 중 알 수 없는 오류가 발생했습니다.'
+}
+
+export function mapCancelSessionApiErrorMessage(error: unknown): string {
+  if (error instanceof SessionApiError) {
+    return error.message
+  }
+  if (error instanceof TypeError) {
+    return '백엔드에 연결할 수 없습니다. npm run server 로 서버를 실행해 주세요.'
+  }
+  return '세션 취소 중 알 수 없는 오류가 발생했습니다.'
 }

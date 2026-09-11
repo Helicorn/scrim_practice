@@ -19,24 +19,24 @@ const SWAP_TIMER_SECONDS = 60
 const POSITION_LABELS = ['탑', '정글', '미드', '원딜', '서포터'] as const
 const ddragonDataVersionUrl = 'https://ddragon.leagueoflegends.com/api/versions.json'
 const pickBanOrder = [
-  { team: 'RED', type: 'BAN' },
   { team: 'BLUE', type: 'BAN' },
   { team: 'RED', type: 'BAN' },
   { team: 'BLUE', type: 'BAN' },
   { team: 'RED', type: 'BAN' },
   { team: 'BLUE', type: 'BAN' },
+  { team: 'RED', type: 'BAN' },
 
-  { team: 'RED', type: 'PICK' },
-  { team: 'BLUE', type: 'PICK' },
   { team: 'BLUE', type: 'PICK' },
   { team: 'RED', type: 'PICK' },
   { team: 'RED', type: 'PICK' },
   { team: 'BLUE', type: 'PICK' },
+  { team: 'BLUE', type: 'PICK' },
+  { team: 'RED', type: 'PICK' },
 
-  { team: 'BLUE', type: 'BAN' },
   { team: 'RED', type: 'BAN' },
   { team: 'BLUE', type: 'BAN' },
   { team: 'RED', type: 'BAN' },
+  { team: 'BLUE', type: 'BAN' },
 
   { team: 'RED', type: 'PICK' },
   { team: 'BLUE', type: 'PICK' },
@@ -154,8 +154,8 @@ const phaseHeaderLabel = computed(() => {
   return currentPhaseLabelText.value
 })
 
-const displayedRedBans = computed(() => [...redBans.value].reverse())
-const displayedBlueBans = computed(() => blueBans.value)
+const displayedRedBans = computed(() => redBans.value)
+const displayedBlueBans = computed(() => [...blueBans.value].reverse())
 function isBanChampion(ban: BanSlot): ban is ChampionPortrait {
   return ban !== null && ban !== 'skipped'
 }
@@ -730,44 +730,44 @@ onUnmounted(() => {
     </header>
 
     <div class="draft-board">
-      <aside class="side side-red" aria-label="레드 팀">
-        <div class="team-bar">RED</div>
+      <aside class="side side-blue" aria-label="블루 팀">
+        <div class="team-bar">BLUE</div>
         <ol class="pick-list">
           <li
             v-for="i in TEAM_SIZE"
-            :key="`red-pick-${i - 1}`"
+            :key="`blue-pick-${i - 1}`"
             class="pick-slot"
             :class="{
               filled:
-                session.isFilledPlayer(getSlot('red', i - 1)) ||
-                !!getPickedChampion('red', i - 1),
-              'has-champion': !!getPickedChampion('red', i - 1),
+                session.isFilledPlayer(getSlot('blue', i - 1)) ||
+                !!getPickedChampion('blue', i - 1),
+              'has-champion': !!getPickedChampion('blue', i - 1),
               'swap-selectable':
-                isSwapPhaseActive && !!getPickedChampion('red', i - 1),
-              'swap-selected': isSwapSlotSelected('red', i - 1),
+                isSwapPhaseActive && !!getPickedChampion('blue', i - 1),
+              'swap-selected': isSwapSlotSelected('blue', i - 1),
             }"
             :role="isSwapPhaseActive ? 'button' : undefined"
-            :tabindex="isSwapPhaseActive && getPickedChampion('red', i - 1) ? 0 : undefined"
-            @click="onPickSlotClick('red', i - 1)"
-            @keydown.enter.prevent="onPickSlotClick('red', i - 1)"
-            @keydown.space.prevent="onPickSlotClick('red', i - 1)"
+            :tabindex="isSwapPhaseActive && getPickedChampion('blue', i - 1) ? 0 : undefined"
+            @click="onPickSlotClick('blue', i - 1)"
+            @keydown.enter.prevent="onPickSlotClick('blue', i - 1)"
+            @keydown.space.prevent="onPickSlotClick('blue', i - 1)"
           >
             <span class="pick-position">{{ POSITION_LABELS[i - 1] }}</span>
             <div
-              v-if="getPickedChampion('red', i - 1)"
+              v-if="getPickedChampion('blue', i - 1)"
               class="pick-champion-art-wrap"
-              :aria-label="`${getPickedChampion('red', i - 1)?.name} 픽`"
+              :aria-label="`${getPickedChampion('blue', i - 1)?.name} 픽`"
             >
               <img
-                :src="getPickedChampion('red', i - 1)?.imageUrl"
-                :alt="`${getPickedChampion('red', i - 1)?.name} 픽 초상화`"
+                :src="getPickedChampion('blue', i - 1)?.imageUrl"
+                :alt="`${getPickedChampion('blue', i - 1)?.name} 픽 초상화`"
                 class="pick-champion-art"
               />
             </div>
             <span class="pick-name">
               {{
-                session.isFilledPlayer(getSlot('red', i - 1))
-                  ? session.formatPlayerLabel(getSlot('red', i - 1))
+                session.isFilledPlayer(getSlot('blue', i - 1))
+                  ? session.formatPlayerLabel(getSlot('blue', i - 1))
                   : '—'
               }}
             </span>
@@ -864,44 +864,44 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <aside class="side side-blue" aria-label="블루 팀">
-        <div class="team-bar">BLUE</div>
+      <aside class="side side-red" aria-label="레드 팀">
+        <div class="team-bar">RED</div>
         <ol class="pick-list">
           <li
             v-for="i in TEAM_SIZE"
-            :key="`blue-pick-${i - 1}`"
+            :key="`red-pick-${i - 1}`"
             class="pick-slot"
             :class="{
               filled:
-                session.isFilledPlayer(getSlot('blue', i - 1)) ||
-                !!getPickedChampion('blue', i - 1),
-              'has-champion': !!getPickedChampion('blue', i - 1),
+                session.isFilledPlayer(getSlot('red', i - 1)) ||
+                !!getPickedChampion('red', i - 1),
+              'has-champion': !!getPickedChampion('red', i - 1),
               'swap-selectable':
-                isSwapPhaseActive && !!getPickedChampion('blue', i - 1),
-              'swap-selected': isSwapSlotSelected('blue', i - 1),
+                isSwapPhaseActive && !!getPickedChampion('red', i - 1),
+              'swap-selected': isSwapSlotSelected('red', i - 1),
             }"
             :role="isSwapPhaseActive ? 'button' : undefined"
-            :tabindex="isSwapPhaseActive && getPickedChampion('blue', i - 1) ? 0 : undefined"
-            @click="onPickSlotClick('blue', i - 1)"
-            @keydown.enter.prevent="onPickSlotClick('blue', i - 1)"
-            @keydown.space.prevent="onPickSlotClick('blue', i - 1)"
+            :tabindex="isSwapPhaseActive && getPickedChampion('red', i - 1) ? 0 : undefined"
+            @click="onPickSlotClick('red', i - 1)"
+            @keydown.enter.prevent="onPickSlotClick('red', i - 1)"
+            @keydown.space.prevent="onPickSlotClick('red', i - 1)"
           >
             <span class="pick-position">{{ POSITION_LABELS[i - 1] }}</span>
             <div
-              v-if="getPickedChampion('blue', i - 1)"
+              v-if="getPickedChampion('red', i - 1)"
               class="pick-champion-art-wrap"
-              :aria-label="`${getPickedChampion('blue', i - 1)?.name} 픽`"
+              :aria-label="`${getPickedChampion('red', i - 1)?.name} 픽`"
             >
               <img
-                :src="getPickedChampion('blue', i - 1)?.imageUrl"
-                :alt="`${getPickedChampion('blue', i - 1)?.name} 픽 초상화`"
+                :src="getPickedChampion('red', i - 1)?.imageUrl"
+                :alt="`${getPickedChampion('red', i - 1)?.name} 픽 초상화`"
                 class="pick-champion-art"
               />
             </div>
             <span class="pick-name">
               {{
-                session.isFilledPlayer(getSlot('blue', i - 1))
-                  ? session.formatPlayerLabel(getSlot('blue', i - 1))
+                session.isFilledPlayer(getSlot('red', i - 1))
+                  ? session.formatPlayerLabel(getSlot('red', i - 1))
                   : '—'
               }}
             </span>
@@ -911,10 +911,10 @@ onUnmounted(() => {
     </div>
 
     <footer class="draft-footer">
-      <div class="ban-group ban-red" aria-label="레드 밴">
+      <div class="ban-group ban-blue" aria-label="블루 밴">
         <span
-          v-for="(ban, index) in displayedRedBans"
-          :key="`red-ban-${index}`"
+          v-for="(ban, index) in displayedBlueBans"
+          :key="`blue-ban-${index}`"
           class="ban-slot"
           :class="{
             'ban-slot--skipped': ban === 'skipped',
@@ -942,10 +942,10 @@ onUnmounted(() => {
         </span>
       </div>
       <p class="footer-title">{{ currentPhaseLabel }}</p>
-      <div class="ban-group ban-blue" aria-label="블루 밴">
+      <div class="ban-group ban-red" aria-label="레드 밴">
         <span
-          v-for="(ban, index) in displayedBlueBans"
-          :key="`blue-ban-${index}`"
+          v-for="(ban, index) in displayedRedBans"
+          :key="`red-ban-${index}`"
           class="ban-slot"
           :class="{
             'ban-slot--skipped': ban === 'skipped',
@@ -1135,13 +1135,12 @@ onUnmounted(() => {
   border: 1px solid var(--draft-panel-border);
 }
 
-.side-red .pick-slot {
-  border-left: 3px solid var(--draft-red);
+.side-blue .pick-slot {
+  border-left: 3px solid var(--draft-blue);
 }
 
-.side-blue .pick-slot {
-  border-right: 3px solid var(--draft-blue);
-  justify-content: flex-end;
+.side-red .pick-slot {
+  border-right: 3px solid var(--draft-red);
 }
 
 .pick-slot.filled {
@@ -1174,7 +1173,7 @@ onUnmounted(() => {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.side-blue .pick-name {
+.side-red .pick-name {
   text-align: right;
 }
 
@@ -1197,7 +1196,7 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-.side-blue .pick-position {
+.side-red .pick-position {
   left: auto;
   right: 0.35rem;
 }
@@ -1438,11 +1437,11 @@ onUnmounted(() => {
   gap: 0.35rem;
 }
 
-.ban-red {
+.ban-blue {
   justify-content: flex-start;
 }
 
-.ban-blue {
+.ban-red {
   justify-content: flex-end;
 }
 

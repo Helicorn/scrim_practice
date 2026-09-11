@@ -53,6 +53,17 @@ erDiagram
 | `redSeriesWins` / `blueSeriesWins` | `RED_SERIES_WINS` / `BLUE_SERIES_WINS` |
 | `Player.gameName` + `tagLine` | `SUMMONER` |
 | `Player.puuid` | `SUMMONER.PUUID` |
+| `Player` 팀 슬롯 | `CUSTOM_GAME_PLAYER.TEAM_COLOR`, `POSITION_NAME` |
+| `suggestedRoute` (이어가기) | `CUSTOM_GAME.STATUS` (아래) |
+
+### 세션 STATUS ↔ 이어가기
+
+| STATUS | 화면 |
+|--------|------|
+| `PLAYERS` | 팀 배치 |
+| `TEAM_SETUP`, `DRAFT` | 밴픽 |
+| `RESULT_INPUT` | 경기 결과 |
+| `FINISHED`, `CANCELLED` | 복구 불가 |
 
 ## 정리 시 반영한 수정 사항
 

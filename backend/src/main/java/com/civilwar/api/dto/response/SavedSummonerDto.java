@@ -9,5 +9,6 @@ public record SavedSummonerDto(
 		String tier,
 		String rankName,
 		Integer leaguePoints,
-		String queueType) {
+		String queueType,
+		SummonerDisplayStatsDto displayStats) {
 }
